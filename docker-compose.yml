@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  rftg-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rftg-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - rftg_api_cache:/app/cache
+      - rftg_artifacts:/app/artifacts
+    environment:
+      - REDIS_URL=redis://rftg-redis:6379/0
+      - MB_USER_AGENT=RockFamilyTreeGen/1.2.0 ( contact@example.com )
+    depends_on:
+      - rftg-redis
+    networks:
+      - rftg-net
+
+  rftg-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rftg-worker
+    command: celery -A app.worker worker --loglevel=info
+    volumes:
+      - ./backend:/app
+      - rftg_api_cache:/app/cache
+      - rftg_artifacts:/app/artifacts
+    environment:
+      - REDIS_URL=redis://rftg-redis:6379/0
+      - MB_USER_AGENT=RockFamilyTreeGen/1.2.0 ( contact@example.com )
+    depends_on:
+      - rftg-redis
+    networks:
+      - rftg-net
+
+  rftg-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rftg-frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - rftg-net
+
+  rftg-redis:
+    image: redis:7-alpine
+    container_name: rftg-redis
+    networks:
+      - rftg-net
+
+networks:
+  rftg-net:
+    driver: bridge
+
+volumes:
+  rftg_api_cache:
+  rftg_artifacts:

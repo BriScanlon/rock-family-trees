@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+celery
+redis
+musicbrainzngs
+requests
+pydantic
+sqlitedict
+python-multipart
+python-dotenv
