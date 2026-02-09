@@ -30,3 +30,10 @@ cache/
 
 # Docker
 .docker/
+
+# .env
+.env
+
+# python cache
+__pycache__/
+*.pyc

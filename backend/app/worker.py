@@ -4,6 +4,9 @@ from app.harvester import Harvester
 from app.refiner import Refiner
 from app.cartographer import Cartographer
 from app.artist import Artist
+from dotenv import load_dotenv
+
+load_dotenv()
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 celery = Celery("tasks", broker=redis_url, backend=redis_url)

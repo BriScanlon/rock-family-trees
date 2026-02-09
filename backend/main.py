@@ -7,6 +7,9 @@ import os
 from app.harvester import Harvester
 from app.worker import process_tree
 
+from dotenv import load_dotenv
+import uvicorn
+load_dotenv()
 app = FastAPI(title="Rock Family Tree Generator API", version="1.2.0")
 
 # Initialize harvester
@@ -76,14 +79,5 @@ async def download_result(job_id: str):
     raise HTTPException(status_code=404, detail="Result not found")
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-@app.get("/download/{job_id}")
-async def download_result(job_id: str):
-    # TODO: Serve the generated PDF/SVG
-    return {"message": f"Download link for {job_id}"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("BACKEND_PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

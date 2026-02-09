@@ -6,15 +6,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rftg-backend
+    env_file: .env
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT}:${BACKEND_PORT}"
     volumes:
       - ./backend:/app
       - rftg_api_cache:/app/cache
       - rftg_artifacts:/app/artifacts
-    environment:
-      - REDIS_URL=redis://rftg-redis:6379/0
-      - MB_USER_AGENT=RockFamilyTreeGen/1.2.0 ( contact@example.com )
     depends_on:
       - rftg-redis
     networks:
@@ -26,13 +24,11 @@ services:
       dockerfile: Dockerfile
     container_name: rftg-worker
     command: celery -A app.worker worker --loglevel=info
+    env_file: .env
     volumes:
       - ./backend:/app
       - rftg_api_cache:/app/cache
       - rftg_artifacts:/app/artifacts
-    environment:
-      - REDIS_URL=redis://rftg-redis:6379/0
-      - MB_USER_AGENT=RockFamilyTreeGen/1.2.0 ( contact@example.com )
     depends_on:
       - rftg-redis
     networks:
@@ -43,8 +39,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: rftg-frontend
+    env_file: .env
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
     networks:
       - rftg-net
 
