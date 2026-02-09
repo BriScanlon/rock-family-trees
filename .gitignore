@@ -1,0 +1,32 @@
+# Node.js
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+frontend/coverage/
+
+# Python
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.env
+backend/.venv/
+backend/env/
+backend/venv/
+backend/cache/
+backend/artifacts/
+
+# System/IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+artifacts/
+data/
+cache/
+*.log
+
+# Docker
+.docker/
