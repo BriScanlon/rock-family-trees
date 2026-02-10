@@ -9,6 +9,7 @@ class MemberEdge(BaseModel):
     start_year: Optional[float] = None
     end_year: Optional[float] = None
     role: Optional[str] = None
+    position: Optional[int] = None
 
 class Lineup(BaseModel):
     number: int
@@ -28,55 +29,39 @@ class Refiner:
     def __init__(self):
         self.bands: Dict[str, BandNode] = {}
 
-    def process_raw_data(self, raw_data):
-        if not raw_data:
+    def process_graph_data(self, graph_data):
+        """
+        Processes data returned from Neo4j (via Harvester/GraphDB)
+        """
+        if not graph_data or "bands" not in graph_data:
             return None
 
-        # 1. Identify Bands
-        for mbid, data in raw_data.items():
-            artist_info = data.get('artist', {})
-            if artist_info.get('type') == 'Group':
-                ls = artist_info.get('life-span', {})
-                start = self._parse_year(ls.get('begin'))
-                end = self._parse_year(ls.get('end'))
-                self.bands[mbid] = BandNode(id=mbid, name=artist_info.get('name'), start_year=start, end_year=end)
+        for b_id, b_data in graph_data["bands"].items():
+            all_members = []
+            for m in b_data.get("all_members", []):
+                all_members.append(MemberEdge(
+                    artist_id=m["artist_id"],
+                    artist_name=m["artist_name"],
+                    band_id=b_id,
+                    start_year=m["start_year"],
+                    end_year=m["end_year"],
+                    role=m["role"],
+                    position=m.get("position")
+                ))
+            
+            self.bands[b_id] = BandNode(
+                id=b_id,
+                name=b_data["name"],
+                start_year=b_data["start_year"],
+                end_year=b_data["end_year"],
+                all_members=all_members
+            )
         
-        # 2. Collect All Member Relations
-        for mbid, data in raw_data.items():
-            artist_info = data.get('artist', {})
-            rels = artist_info.get('artist-relation-list', [])
-            for rel in rels:
-                if rel.get('type') == 'member of band':
-                    target = rel.get('artist', {})
-                    if artist_info.get('type') == 'Group':
-                        m_id, b_id, m_name = target.get('id'), mbid, target.get('name')
-                    else:
-                        m_id, b_id, m_name = mbid, target.get('id'), artist_info.get('name')
-                    
-                    if b_id in self.bands:
-                        edge = MemberEdge(
-                            artist_id=m_id, artist_name=m_name, band_id=b_id,
-                            start_year=self._parse_year(rel.get('begin')),
-                            end_year=self._parse_year(rel.get('end')),
-                            role=self._parse_role(rel.get('attributes', []))
-                        )
-                        if not any(m.artist_id == m_id and m.start_year == edge.start_year for m in self.bands[b_id].all_members):
-                            self.bands[b_id].all_members.append(edge)
-
-        # 3. Partition into Lineups
+        # Partition into lineups
         for b_id, band in self.bands.items():
             band.lineups = self._calculate_lineups(band)
 
         return {"bands": self.bands}
-
-    def _parse_year(self, date_str):
-        if not date_str or len(date_str) < 4: return None
-        try: return float(date_str[:4])
-        except: return None
-
-    def _parse_role(self, attributes):
-        parts = [a if isinstance(a, str) else a.get('attribute', '') for a in attributes]
-        return ", ".join(filter(None, parts)) if parts else None
 
     def _calculate_lineups(self, band: BandNode):
         # Find all significant "change years"
@@ -94,23 +79,20 @@ class Refiner:
         lineups = []
         lineup_count = 1
         
-        # Create epochs between years
         for i in range(len(sorted_years) - 1):
             s_yr = sorted_years[i]
             e_yr = sorted_years[i+1]
             mid_yr = s_yr + 0.5
             
-            # Who was in the band during this epoch?
             active_members = []
             for m in band.all_members:
                 m_start = m.start_year or band.start_year or 0
-                m_end = m.end_year or band.end_year or 2025
+                m_end = m.end_year or band.end_year or 2026
                 if m_start <= mid_yr <= m_end:
                     active_members.append(m)
             
             if not active_members: continue
 
-            # Check if this lineup is the same as the previous one
             if lineups and [m.artist_id for m in lineups[-1].members] == [m.artist_id for m in active_members]:
                 lineups[-1].end_year = e_yr
             else:

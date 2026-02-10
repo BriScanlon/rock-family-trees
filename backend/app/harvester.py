@@ -1,20 +1,18 @@
 import musicbrainzngs
 import os
-from sqlitedict import SqliteDict
 import time
 import random
+from app.graph_db import Neo4jClient
 
 class Harvester:
-    def __init__(self, cache_path="cache/mb_cache.sqlite"):
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        self.cache = SqliteDict(cache_path, autocommit=True)
+    def __init__(self):
         musicbrainzngs.set_useragent(
             os.getenv("MB_USER_AGENT", "RockFamilyTreeGen/1.2.1"),
             "1.2.1",
             "briscanlon@gmail.com"
         )
-        # Strict rate limit (1 req/sec)
         self.last_call = 0
+        self.db = Neo4jClient()
 
     def _wait_for_rate_limit(self):
         elapsed = time.time() - self.last_call
@@ -38,10 +36,6 @@ class Harvester:
         return None
 
     def search_artists(self, query):
-        cache_key = f"search:{query}"
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-        
         try:
             result = self._safe_call(musicbrainzngs.search_artists, artist=query)
             if not result: return []
@@ -52,47 +46,103 @@ class Harvester:
                     "id": artist['id'], "name": artist['name'],
                     "type": artist.get('type'), "disambiguation": artist.get('disambiguation')
                 })
-            self.cache[cache_key] = artists
             return artists
         except Exception as e:
             print(f"Search failed: {e}")
             return []
 
-    def get_artist_details(self, mbid):
-        if mbid in self.cache:
-            return self.cache[mbid]
-        
+    def sync_artist_to_neo4j(self, mbid):
+        """Fetches data from MB and writes it to Neo4j"""
         try:
-            print(f"--> Fetching MBID: {mbid}")
-            artist = self._safe_call(
+            print(f"--> Syncing MBID to Neo4j: {mbid}")
+            result = self._safe_call(
                 musicbrainzngs.get_artist_by_id, mbid, 
-                includes=["artist-rels", "label-rels", "release-groups"]
+                includes=["artist-rels"]
             )
-            if artist:
-                self.cache[mbid] = artist
-            return artist
+            if not result: return
+            
+            artist_data = result.get('artist', {})
+            name = artist_data.get('name')
+            is_group = artist_data.get('type') == 'Group'
+            
+            if is_group:
+                ls = artist_data.get('life-span', {})
+                start = self._parse_year(ls.get('begin'))
+                end = self._parse_year(ls.get('end'))
+                self.db.upsert_band(mbid, name, start, end)
+                
+                # Members
+                rels = artist_data.get('artist-relation-list', [])
+                for idx, rel in enumerate(rels):
+                    if rel.get('type') == 'member of band':
+                        target = rel.get('artist', {})
+                        m_id, m_name = target.get('id'), target.get('name')
+                        
+                        membership = {
+                            "role": self._parse_role(rel.get('attributes', [])),
+                            "start_year": self._parse_year(rel.get('begin')),
+                            "end_year": self._parse_year(rel.get('end')),
+                            "position": idx
+                        }
+                        self.db.upsert_membership(m_id, m_name, mbid, membership)
+            else:
+                # Individual artist - we just upsert them (memberships will link them to bands)
+                # Note: In a real recursion, we might want to find bands this artist is in.
+                # But here we focus on Group-down recursion.
+                pass
+                
         except Exception as e:
-            print(f"!!! Error details for {mbid}: {e}")
-            return None
+            print(f"!!! Error syncing {mbid}: {e}")
 
     def fetch_recursive(self, mbid, max_depth=2):
-        visited = {}
+        """
+        Depth-aware recursive harvest.
+        1. Check Neo4j for explored_depth.
+        2. If too shallow, expand.
+        """
+        current_explored = self.db.get_explored_depth(mbid)
+        
+        if current_explored < max_depth:
+            print(f"Cache miss or shallow (depth {current_explored} < {max_depth}). Expanding...")
+            self._expand_recursive(mbid, max_depth)
+            self.db.set_explored_depth(mbid, max_depth)
+        else:
+            print(f"Cache hit (depth {current_explored} >= {max_depth}).")
+
+        # Always return the subgraph from Neo4j
+        return self.db.get_subgraph(mbid, max_depth)
+
+    def _expand_recursive(self, mbid, max_depth):
+        visited = set()
         queue = [(mbid, 0)]
         
         while queue:
-            current_mbid, depth = queue.pop(0)
-            if current_mbid in visited: continue
-                
-            data = self.get_artist_details(current_mbid)
-            if not data: continue
-                
-            visited[current_mbid] = data
+            curr_mbid, depth = queue.pop(0)
+            if curr_mbid in visited: continue
+            visited.add(curr_mbid)
+            
+            # Sync this node to Neo4j
+            self.sync_artist_to_neo4j(curr_mbid)
+            
             if depth < max_depth:
-                artist_rels = data.get('artist', {}).get('artist-relation-list', [])
-                for rel in artist_rels:
-                    if 'artist' in rel and rel.get('type') == 'member of band':
-                        target_id = rel['artist']['id']
-                        if target_id not in visited:
+                # To find neighbors, we look at what we just put in Neo4j 
+                # or we can extract them from the MB response.
+                # Let's use the MB response for simplicity during sync.
+                result = self._safe_call(musicbrainzngs.get_artist_by_id, curr_mbid, includes=["artist-rels"])
+                if not result: continue
+                
+                rels = result.get('artist', {}).get('artist-relation-list', [])
+                for rel in rels:
+                    if rel.get('type') == 'member of band':
+                        target_id = rel.get('artist', {}).get('id')
+                        if target_id and target_id not in visited:
                             queue.append((target_id, depth + 1))
-                            
-        return visited
+
+    def _parse_year(self, date_str):
+        if not date_str or len(date_str) < 4: return None
+        try: return int(date_str[:4])
+        except: return None
+
+    def _parse_role(self, attributes):
+        parts = [a if isinstance(a, str) else a.get('attribute', '') for a in attributes]
+        return ", ".join(filter(None, parts)) if parts else None

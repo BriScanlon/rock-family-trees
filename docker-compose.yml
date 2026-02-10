@@ -12,7 +12,8 @@ services:
       - rftg_api_cache:/app/cache
       - rftg_artifacts:/app/artifacts
     depends_on:
-      - rftg-redis
+      - rftg-rabbitmq
+      - rftg-neo4j
     networks:
       - rftg-net
 
@@ -28,7 +29,8 @@ services:
       - rftg_api_cache:/app/cache
       - rftg_artifacts:/app/artifacts
     depends_on:
-      - rftg-redis
+      - rftg-rabbitmq
+      - rftg-neo4j
     networks:
       - rftg-net
 
@@ -43,9 +45,25 @@ services:
     networks:
       - rftg-net
 
-  rftg-redis:
-    image: redis:7-alpine
-    container_name: rftg-redis
+  rftg-rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rftg-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - rftg-net
+
+  rftg-neo4j:
+    image: neo4j:5-community
+    container_name: rftg-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password_placeholder
+    volumes:
+      - rftg_neo4j_data:/data
     networks:
       - rftg-net
 
@@ -56,3 +74,4 @@ networks:
 volumes:
   rftg_api_cache:
   rftg_artifacts:
+  rftg_neo4j_data:

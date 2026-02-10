@@ -9,29 +9,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-celery = Celery("tasks", broker=redis_url, backend=redis_url)
+# Use RabbitMQ as the broker
+rabbitmq_url = os.getenv("RABBITMQ_URL", "pyamqp://guest:guest@rftg-rabbitmq//")
+celery = Celery("tasks", broker=rabbitmq_url, backend="rpc://") # RPC backend for results
 
 @celery.task(bind=True, name="process_tree")
 def process_tree(self, job_id, artist_id, depth):
-    # Standard task execution with NO complex Pydantic objects returned
     task_id = self.request.id
     try:
         os.makedirs("artifacts", exist_ok=True)
-        print(f"Task {task_id}: Starting Harvest (Artist: {artist_id}, Depth: {depth})")
+        print(f"Task {task_id}: Starting Graph-Aware Harvest (Artist: {artist_id}, Depth: {depth})")
         
-        # 1. Harvest
+        # 1. Harvest & Sync to Neo4j
         self.update_state(state='PROGRESS', meta={'progress': 10})
         harvester = Harvester()
-        raw_data = harvester.fetch_recursive(artist_id, max_depth=depth)
+        graph_data = harvester.fetch_recursive(artist_id, max_depth=depth)
         
-        # 2. Refine
-        print(f"Task {task_id}: Refining {len(raw_data)} records")
+        # 2. Refine (from Subgraph)
+        print(f"Task {task_id}: Refining graph data")
         self.update_state(state='PROGRESS', meta={'progress': 40})
         refiner = Refiner()
-        graph_obj = refiner.process_raw_data(raw_data)
+        graph_obj = refiner.process_graph_data(graph_data)
         
-        # Manually serialize the graph to avoid Pydantic issues in Cartographer/Artist
+        # Serialize for layout
         graph = {
             "bands": {
                 mbid: band.model_dump() 
@@ -60,5 +60,4 @@ def process_tree(self, job_id, artist_id, depth):
     except Exception as e:
         print(f"Task {task_id}: FAILED -> {str(e)}")
         traceback.print_exc()
-        # Return serializable error info
         return {"status": "Error", "progress": 0, "message": str(e)}

@@ -1,7 +1,8 @@
 fastapi
 uvicorn
 celery
-redis
+pika
+neo4j
 musicbrainzngs
 requests
 pydantic
