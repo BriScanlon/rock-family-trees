@@ -5,14 +5,14 @@
 @tailwind utilities;
 
 :root {
-  --color-background: #F8F5F2; /* A warm, off-white */
-  --color-text-primary: #2C2A28; /* A dark, almost-black */
-  --color-text-secondary: #7A7570; /* A muted, earthy tone */
-  --color-accent: #A46A42; /* A subtle sepia/brown */
-  --color-accent-hover: #8A5634; /* A darker shade for hover */
-  --color-border: #E5E1DD;
-  --font-serif: 'Merriweather', serif;
-  --font-sans: 'Inter', sans-serif;
+  --color-background: #f4f1ea; /* Pete Frame "aged paper" */
+  --color-text-primary: #000000; /* 100% black */
+  --color-text-secondary: #333333;
+  --color-accent: #000000;
+  --color-accent-hover: #333333;
+  --color-border: #000000;
+  --font-serif: 'Impact', sans-serif;
+  --font-sans: 'Arial Narrow', 'Arial', sans-serif;
 }
 
 body {

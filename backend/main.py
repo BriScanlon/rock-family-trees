@@ -10,7 +10,7 @@ from app.worker import process_tree
 from dotenv import load_dotenv
 import uvicorn
 load_dotenv()
-app = FastAPI(title="Rock Family Tree Generator API", version="1.2.0")
+app = FastAPI(title="Rock Family Tree Generator API", version="1.2.1")
 
 # Initialize harvester
 harvester = Harvester()
@@ -18,7 +18,7 @@ harvester = Harvester()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -28,6 +28,10 @@ class SearchResult(BaseModel):
     name: str
     type: Optional[str] = None
     disambiguation: Optional[str] = None
+
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
 
 class GenerationRequest(BaseModel):
     artist_id: str
@@ -40,9 +44,9 @@ class JobStatus(BaseModel):
     progress: int
     result_url: Optional[str] = None
 
-# Mock database for jobs
+# Remove mock database for jobs
 # In production, use Redis or a database
-jobs = {}
+# jobs = {}
 
 @app.get("/")
 def read_root():
@@ -50,25 +54,57 @@ def read_root():
 
 @app.get("/search", response_model=List[SearchResult])
 async def search_artist(q: str):
-    return harvester.search_artists(q)
+    print(f"Search request received for: {q}")
+    try:
+        results = harvester.search_artists(q)
+        print(f"Found {len(results)} results")
+        return results
+    except Exception as e:
+        print(f"Search error: {e}")
+        return []
+
+@app.get("/search/", response_model=List[SearchResult], include_in_schema=False)
+async def search_artist_slash(q: str):
+    return await search_artist(q)
 
 @app.post("/generate", response_model=JobStatus)
 async def generate_tree(request: GenerationRequest):
-    job_id = str(uuid.uuid4())
-    jobs[job_id] = {"status": "Processing", "progress": 10}
-    
-    # Enqueue Celery task
-    process_tree.delay(job_id, request.artist_id, request.depth)
-    
-    return {"job_id": job_id, "status": "Processing", "progress": 10}
+    task = process_tree.delay(None, request.artist_id, request.depth)
+    return {"job_id": task.id, "status": "Processing", "progress": 0}
 
 @app.get("/status/{job_id}", response_model=JobStatus)
 async def get_status(job_id: str):
-    # In a real app, we would query Celery or a shared DB
-    if job_id not in jobs:
-        # Check if celery has it (simplified for this prototype)
-        return {"job_id": job_id, "status": "Completed", "progress": 100, "result_url": f"/download/{job_id}"}
-    return {"job_id": job_id, **jobs[job_id]}
+    try:
+        task = process_tree.AsyncResult(job_id)
+        # Checking .state can raise ValueError if metadata is corrupted
+        try:
+            state = task.state
+        except (ValueError, KeyError) as e:
+            print(f"Metadata error for task {job_id}: {e}")
+            return {"job_id": job_id, "status": "Error", "progress": 0}
+
+        if state == 'PENDING':
+            return {"job_id": job_id, "status": "Pending", "progress": 0}
+        elif task.state == 'PROGRESS':
+            progress = 0
+            if isinstance(task.info, dict):
+                progress = task.info.get('progress', 0)
+            return {"job_id": job_id, "status": "Processing", "progress": progress}
+        elif task.state == 'SUCCESS':
+            # task.result contains the return value of the task
+            result = task.result
+            if isinstance(result, dict) and result.get('status') == 'Error':
+                return {"job_id": job_id, "status": "Error", "progress": 0}
+            
+            res_url = result.get('result_url') if isinstance(result, dict) else f"/download/{job_id}"
+            return {"job_id": job_id, "status": "Completed", "progress": 100, "result_url": res_url}
+        elif task.state == 'FAILURE':
+            return {"job_id": job_id, "status": "Error", "progress": 0}
+        else:
+            return {"job_id": job_id, "status": task.state, "progress": 0}
+    except Exception as e:
+        print(f"Status check error: {e}")
+        return {"job_id": job_id, "status": "Error", "progress": 0}
 
 @app.get("/download/{job_id}")
 async def download_result(job_id: str):

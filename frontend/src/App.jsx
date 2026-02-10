@@ -1,10 +1,15 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import { Search, Download, Settings, Loader2 } from 'lucide-react'
 
+import { phrases } from './phrases';
 function App() {
+  // Automatically detect backend host based on frontend URL
   const backendPort = import.meta.env.VITE_BACKEND_PORT || 8000;
-  const backendUrl = `http://localhost:${backendPort}`;
+  const backendHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  const backendUrl = `http://${backendHost}:${backendPort}`;
+  console.log('Backend URL:', backendUrl);
+  
   const [query, setQuery] = useState('')
   const [depth, setDepth] = useState(2)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -13,11 +18,22 @@ function App() {
   const [resultUrl, setResultUrl] = useState(null)
   const [searchResults, setSearchResults] = useState([])
   const [selectedArtist, setSelectedArtist] = useState(null)
+  const [currentPhrase, setCurrentPhrase] = useState(phrases[0]);
+
+  useEffect(() => {
+    let phraseInterval;
+    if (isGenerating) {
+      phraseInterval = setInterval(() => {
+        setCurrentPhrase(phrases[Math.floor(Math.random() * phrases.length)]);
+      }, 10000);
+    }
+    return () => clearInterval(phraseInterval);
+  }, [isGenerating]);
 
   const handleSearch = async () => {
     if (!query) return;
     try {
-      const response = await axios.get(`http://localhost:8000/search?q=${query}`)
+      const response = await axios.get(`${backendUrl}/search?q=${query}`)
       setSearchResults(response.data)
     } catch (error) {
       console.error('Search failed:', error)
@@ -28,7 +44,7 @@ function App() {
     if (!selectedArtist) return;
     setIsGenerating(true)
     try {
-      const response = await axios.post('http://localhost:8000/generate', {
+      const response = await axios.post(`${backendUrl}/generate`, {
         artist_id: selectedArtist.id,
         depth: depth
       })
@@ -43,13 +59,13 @@ function App() {
   const pollStatus = (id) => {
     const interval = setInterval(async () => {
       try {
-        const response = await axios.get(`http://localhost:8000/status/${id}`)
+        const response = await axios.get(`${backendUrl}/status/${id}`)
         setStatus(response.data)
         if (response.data.status === 'Completed' || response.data.status === 'Error') {
           clearInterval(interval)
           setIsGenerating(false)
           if (response.data.status === 'Completed') {
-            setResultUrl(`http://localhost:8000${response.data.result_url}`)
+            setResultUrl(`${backendUrl}${response.data.result_url}`)
           }
         }
       } catch (error) {
@@ -154,7 +170,7 @@ function App() {
               {isGenerating ? (
                 <div className="text-center">
                   <Loader2 className="w-12 h-12 text-text-secondary animate-spin mx-auto mb-4" />
-                  <p className="text-text-secondary font-medium">Generating your masterpiece...</p>
+                  <p className="text-text-secondary font-medium">{currentPhrase}</p>
                 </div>
               ) : resultUrl ? (
                 <img src={resultUrl} alt="Generated Rock Family Tree" className="w-full h-full object-contain" />
