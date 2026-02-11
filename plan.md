@@ -47,10 +47,12 @@ Transition the Rock Family Tree Generator from a flat-file/Redis architecture to
   - Orchestrate the new Graph-first flow.
 
 ### Phase 5: Verification
-- [/] Run end-to-end tests (Search -> Generate -> Neo4j Query -> SVG Verify).
-- [ ] Validate portrait layout remains intact with new data source.
+- [x] Run end-to-end tests (Search -> Generate -> Neo4j Query -> SVG Verify).
+  - Implemented mocked end-to-end test in `backend/tests/test_full_flow.py`.
+- [x] Validate portrait layout remains intact with new data source.
+  - Verified via `test_full_flow.py` using Joy Division -> New Order transition.
 
 ## 4. Testing Strategy
-- **Unit Tests:** Verify `Neo4jClient` CRUD operations.
-- **Integration Tests:** Verify `Harvester` only calls MusicBrainz when Neo4j depth is insufficient.
-- **E2E Tests:** Generate a tree for a well-known band and verify relationships in Neo4j browser.
+- **Unit Tests:** Verify `Neo4jClient` CRUD operations (Mocked in `test_harvester_logic.py`).
+- **Integration Tests:** Verify `Harvester` only calls MusicBrainz when Neo4j depth is insufficient (Verified in `test_harvester_logic.py`).
+- **E2E Tests:** Generate a tree for a well-known band and verify relationships (Verified in `test_full_flow.py`).

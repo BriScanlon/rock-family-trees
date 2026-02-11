@@ -1,208 +1,228 @@
-from typing import List, Dict, Set
+from typing import List, Dict, Optional
 import math
+import statistics
 
 class Cartographer:
-    def __init__(self, graph):
+    def __init__(self, graph, root_artist_id=None):
         self.graph = graph
-        self.layout = {"bands": {}, "edges": [], "members": []}
-        self.YEAR_SCALE = 200 # Increased for readability
-        self.MEMBER_WIDTH = 250 # Increased for readability
-        self.BAND_SPACING_X = 150
-        self.LANE_PADDING = 60
-        self.MIN_MARGIN_Y = 300
+        self.root_artist_id = root_artist_id
+        
+        # Global Settings
+        self.MEMBER_WIDTH = 120
+        self.YEAR_HEIGHT = 150
+        self.HEADER_HEIGHT = 60
+        self.TICK_HEIGHT = 20
+        self.TEXT_STACK_HEIGHT = 50
+        self.X_PADDING = 50 # Minimum gap between version boxes
+        self.Y_PADDING = 50  # Minimum vertical gap if years overlap perfectly
+        
+        self.layout = {"versions": {}, "members": [], "edges": []}
+        self.placed_boxes = [] # List of {x, y, w, h} for collision detection
+
+    def _get_year_y(self, year):
+        return (year - self.min_year) * self.YEAR_HEIGHT + 100
+
+    def _check_collision(self, x, y, w, h):
+        margin = 20
+        for box in self.placed_boxes:
+            # box is (bx, by, bw, bh)
+            # Check overlap
+            if not (x + w + margin < box['x'] or \
+                    x > box['x'] + box['w'] + margin or \
+                    y + h + margin < box['y'] or \
+                    y > box['y'] + box['h'] + margin):
+                return True
+        return False
 
     def calculate_timeline(self):
-        bands_data = self.graph.get("bands", {})
-        if not bands_data: return
+        bands = self.graph.get("bands", {})
+        if not bands: return
 
+        # 1. Flatten into "Versions" (Lineups)
+        all_versions = []
         all_years = []
-        band_ranges = []
-        for b_id, b in bands_data.items():
-            s_yr = b.get('start_year')
-            e_yr = b.get('end_year')
+
+        for b_id, band in bands.items():
+            lineups = band.get('lineups', [])
+            band_name = band.get('name', 'Unknown')
             
-            # Fallback for years if missing
-            lineups = b.get('lineups', [])
-            l_years = []
-            for l in lineups:
-                if l.get('start_year'): l_years.append(l.get('start_year'))
-                if l.get('end_year'): l_years.append(l.get('end_year'))
-            
-            if not s_yr and l_years: s_yr = min(l_years)
-            if not e_yr and l_years: e_yr = max(l_years)
-            
-            s_yr = s_yr or 1960
-            e_yr = e_yr or (s_yr + 5)
-            
-            all_years.extend([s_yr, e_yr])
-            band_ranges.append({
-                'id': b_id,
-                'start': s_yr,
-                'end': e_yr,
-                'max_members': max([len(l.get('members', [])) for l in lineups] or [1])
-            })
+            for lineup in lineups:
+                s_yr = lineup.get('start_year')
+                e_yr = lineup.get('end_year')
+                if not s_yr and not e_yr: s_yr = 1970 # Fallback
+                s_yr = s_yr or e_yr or 1970
+                e_yr = e_yr or s_yr # Point in time if single year
+                
+                all_years.extend([s_yr, e_yr])
+                
+                # Calculate Version Width
+                num_members = len(lineup.get('members', []))
+                width = max(num_members * self.MEMBER_WIDTH, 200) # Min width for title
+                
+                version_id = f"{b_id}_{lineup['number']}"
+                
+                all_versions.append({
+                    "id": version_id,
+                    "band_id": b_id,
+                    "band_name": band_name,
+                    "number": lineup['number'],
+                    "start_year": s_yr,
+                    "end_year": e_yr,
+                    "width": width,
+                    "members": lineup.get('members', [])
+                })
+
+        if not all_years: return
+        self.min_year = min(all_years)
         
-        self.min_year = min(all_years) if all_years else 1960
+        # 2. Sort Versions
+        # Sort by Start Year, then by Band Name (to keep bands together if same year)
+        all_versions.sort(key=lambda v: (v['start_year'], v['band_name']))
+
+        # 3. Place Versions (Clustering & Collision)
+        # We need a map to track where the previous version of a band was placed
+        band_x_history = {} 
         
-        # Sort bands by start year
-        band_ranges.sort(key=lambda x: x['start'])
-        
-        # 1. Lane Assignment (Packing bands into columns to save width)
-        lanes = [] # List of lists of band_ranges
-        for br in band_ranges:
+        center_x = 1240 # Middle of A4
+
+        for v in all_versions:
+            v_height = self.HEADER_HEIGHT + self.TICK_HEIGHT + self.TEXT_STACK_HEIGHT + 20
+            v_y = self._get_year_y(v['start_year'])
+            
+            # Determine Target X
+            target_x = center_x
+            
+            # Heuristic A: Previous Lineup of same band
+            if v['band_id'] in band_x_history:
+                target_x = band_x_history[v['band_id']]
+            else:
+                # Heuristic B: Connectivity (Where did members come from?)
+                # This is complex to query efficiently here without pre-processing edges.
+                # For now, default to Center, or slightly offset based on hash to avoid stacking?
+                # Let's just use Center and let collision resolution spread them out.
+                pass
+
+            # Collision Resolution (Spiral/Alternating Search)
+            # Try target_x, then target_x + 200, target_x - 200, etc.
             placed = False
-            for lane in lanes:
-                # Check if br overlaps with any band already in this lane
-                # We add a small buffer (1 year) to prevent touching
-                overlap = False
-                for existing in lane:
-                    if not (br['end'] + 1 < existing['start'] or existing['end'] + 1 < br['start']):
-                        overlap = True
-                        break
-                if not overlap:
-                    lane.append(br)
-                    placed = True
-                    break
-            if not placed:
-                lanes.append([br])
-
-        # Calculate width for each lane
-        lane_widths = []
-        for lane in lanes:
-            max_m = max(br['max_members'] for br in lane)
-            lane_widths.append(max_m * self.MEMBER_WIDTH + (self.LANE_PADDING * 2))
-
-        # 2. Assign Coordinates
-        current_x = 200
-        for lane_idx, lane in enumerate(lanes):
-            lane_width = lane_widths[lane_idx]
+            shift = 0
+            steps = 0
             
-            for br in lane:
-                b_id = br['id']
-                band = bands_data[b_id]
+            while not placed and steps < 100:
+                test_x = target_x + shift
                 
-                b_y_start = (br['start'] - self.min_year) * self.YEAR_SCALE + self.MIN_MARGIN_Y
+                # Center the box on test_x
+                box_left = test_x - (v['width'] / 2)
                 
-                self.layout["bands"][b_id] = {
-                    "id": b_id,
-                    "name": band['name'],
-                    "x": current_x,
-                    "width": lane_width,
-                    "start_year": br['start'],
-                    "y": b_y_start
-                }
-                
-                # Assign columns for members
-                member_cols = {}
-                next_col = 0
-                lineups = band.get('lineups', [])
-                
-                for l_idx, lineup in enumerate(lineups):
-                    s_yr = lineup.get('start_year') or br['start']
-                    e_yr = lineup.get('end_year') or (s_yr + 1)
-                    y = (s_yr - self.min_year) * self.YEAR_SCALE + self.MIN_MARGIN_Y + 50
+                if not self._check_collision(box_left, v_y, v['width'], v_height):
+                    # Found a spot!
+                    v['x'] = test_x
+                    v['y'] = v_y
+                    v['box_left'] = box_left
+                    v['box_height'] = v_height
                     
-                    active_member_ids = [m['artist_id'] for m in lineup['members']]
-                    current_lineup_cols = {}
+                    self.placed_boxes.append({
+                        'x': box_left, 'y': v_y, 
+                        'w': v['width'], 'h': v_height
+                    })
+                    placed = True
                     
-                    # Carry over columns
-                    for m in lineup['members']:
-                        if m['artist_id'] in member_cols:
-                            current_lineup_cols[m['artist_id']] = member_cols[m['artist_id']]
-                    
-                    # Assign new columns or reuse vacated ones
-                    vacated_cols = []
-                    if l_idx > 0:
-                        prev_lineup = lineups[l_idx-1]
-                        for pm in prev_lineup['members']:
-                            if pm['artist_id'] not in active_member_ids:
-                                vacated_cols.append(member_cols[pm['artist_id']])
-                    vacated_cols.sort()
-                    
-                    for m in lineup['members']:
-                        if m['artist_id'] not in current_lineup_cols:
-                            if vacated_cols:
-                                col = vacated_cols.pop(0)
-                            else:
-                                col = next_col
-                                next_col += 1
-                            member_cols[m['artist_id']] = col
-                            current_lineup_cols[m['artist_id']] = col
-                            # Mark replacements
-                            if l_idx > 0:
-                                # Find who was in this col in prev lineup
-                                for pm in lineups[l_idx-1]['members']:
-                                    if member_cols[pm['artist_id']] == col:
-                                        m['is_replacement'] = True
-                                        m['replaced_from'] = pm['artist_name']
-                                        break
+                    # Update history
+                    band_x_history[v['band_id']] = test_x
+                else:
+                    # Increment shift (alternating)
+                    steps += 1
+                    dist = (steps + 1) // 2 * (v['width'] + self.X_PADDING)
+                    shift = dist if steps % 2 != 0 else -dist
 
-                    # Layout members
-                    for m in lineup['members']:
-                        col = current_lineup_cols[m['artist_id']]
-                        m_x = current_x + self.LANE_PADDING + (col * self.MEMBER_WIDTH)
-                        
-                        self.layout["members"].append({
-                            "id": f"{b_id}_{lineup['number']}_{m['artist_id']}",
-                            "artist_id": m['artist_id'],
-                            "band_id": b_id,
-                            "lineup_num": lineup['number'],
-                            "name": m['artist_name'],
-                            "role": m.get('role', ''),
-                            "x": m_x,
-                            "y": y,
-                            "start_year": s_yr,
-                            "end_year": e_yr,
-                            "is_replacement": m.get('is_replacement', False),
-                            "replaced_from": m.get('replaced_from')
-                        })
-                    
-                    # Lineup metadata
-                    self.layout["bands"][b_id][f"lineup_{lineup['number']}"] = {
-                        "y": y,
-                        "x_start": current_x + self.LANE_PADDING,
-                        "x_end": current_x + lane_width - self.LANE_PADDING
-                    }
-                    
-            current_x += lane_width + self.BAND_SPACING_X
+            if not placed:
+                print(f"Warning: Could not place {v['band_name']} {v['number']}")
+                v['x'] = target_x
+                v['y'] = v_y
+                v['box_left'] = target_x - (v['width'] / 2)
+
+            # 4. Generate Internal Layout Elements
+            # Header
+            self.layout["versions"][v['id']] = {
+                "id": v['id'],
+                "band_name": v['band_name'].upper(),
+                "sublabel": f"#{v['number']} ({int(v['start_year'])} - {int(v['end_year'])})",
+                "x": v['x'],
+                "y": v['y'],
+                "width": v['width'],
+                "beam_y": v['y'] + self.HEADER_HEIGHT
+            }
+
+            # Members
+            num_m = len(v['members'])
+            start_m_x = v['x'] - (num_m * self.MEMBER_WIDTH) / 2 + (self.MEMBER_WIDTH / 2)
+            
+            for idx, m in enumerate(v['members']):
+                m_x = start_m_x + (idx * self.MEMBER_WIDTH)
+                m_y = v['y'] + self.HEADER_HEIGHT + self.TICK_HEIGHT
+                
+                # Member Node
+                self.layout["members"].append({
+                    "id": f"{v['id']}_{m['artist_id']}",
+                    "artist_id": m['artist_id'],
+                    "version_id": v['id'],
+                    "band_id": v['band_id'],
+                    "name": m['artist_name'],
+                    "role": m.get('role', ''),
+                    "x": m_x,
+                    "y": m_y,
+                    "beam_y": v['y'] + self.HEADER_HEIGHT # Store for edge routing
+                })
 
     def route_edges(self):
-        # Vertical Continuity Lines
-        members_by_artist_band = {}
+        # Map: ArtistID -> List of MemberNodes (sorted by time)
+        artist_history = {}
         for m in self.layout["members"]:
-            key = (m['artist_id'], m['band_id'])
-            if key not in members_by_artist_band: members_by_artist_band[key] = []
-            members_by_artist_band[key].append(m)
-        
-        for apps in members_by_artist_band.values():
-            apps.sort(key=lambda x: x['start_year'])
-            for i in range(len(apps) - 1):
-                m1, m2 = apps[i], apps[i+1]
-                if m1['x'] == m2['x']:
+            aid = m['artist_id']
+            if aid not in artist_history: artist_history[aid] = []
+            artist_history[aid].append(m)
+            
+        for aid, history in artist_history.items():
+            # Sort by Y (Time)
+            history.sort(key=lambda m: m['y'])
+            
+            for i in range(len(history) - 1):
+                m1 = history[i]
+                m2 = history[i+1]
+                
+                # Line Logic
+                # From m1 Bottom -> m2 Beam Top (or m2 Top?)
+                # Prompt: "Vertical Continuity... bottom of text in #1 to top of horizontal beam in #2"
+                
+                y_start = m1['y'] + 30 # Approx text height
+                y_end = m2['beam_y']
+                
+                if m1['band_id'] == m2['band_id']:
+                    # Continuity (Same Band)
+                    # If X is same, straight line.
+                    # If X differs (position swap), slanted line.
                     self.layout["edges"].append({
                         "type": "continuity",
-                        "x": m1['x'],
-                        "y1": m1['y'] + 20,
-                        "y2": m2['y'] - 10
+                        "x1": m1['x'],
+                        "y1": y_start,
+                        "x2": m2['x'], # Target the member's X on the beam? 
+                                       # Prompt says "to top of horizontal beam".
+                                       # But visually, connecting to the specific member tick is better.
+                                       # I will target m2['x'] at y_end.
+                        "y2": y_end
                     })
-
-        # Migration Lines
-        artist_apps = {}
-        for m in self.layout["members"]:
-            a_id = m['artist_id']
-            if a_id not in artist_apps: artist_apps[a_id] = []
-            artist_apps[a_id].append(m)
-            
-        for apps in artist_apps.values():
-            apps.sort(key=lambda x: x['start_year'])
-            for i in range(len(apps) - 1):
-                m1, m2 = apps[i], apps[i+1]
-                if m1['band_id'] != m2['band_id']:
+                else:
+                    # Migration (Different Band)
+                    # "Vertical down... horizontal elbow... vertical to new band"
+                    mid_y = (y_start + y_end) / 2
+                    
                     self.layout["edges"].append({
                         "type": "migration",
-                        "x1": m1['x'], "y1": m1['y'] + 30,
-                        "x2": m2['x'], "y2": m2['y'] - 10,
-                        "name": m1['name']
+                        "x1": m1['x'],
+                        "y1": y_start,
+                        "x2": m2['x'],
+                        "y2": y_end,
+                        "note": f"Joined {m2['role']}" # Simplified note
                     })
 
     def get_coordinates(self):

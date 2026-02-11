@@ -32,6 +32,7 @@ function App() {
 
   const handleSearch = async () => {
     if (!query) return;
+    setSelectedArtist(null); // Clear selection to show results dropdown
     try {
       const response = await axios.get(`${backendUrl}/search?q=${query}`)
       setSearchResults(response.data)
@@ -121,12 +122,26 @@ function App() {
             )}
           </div>
           <button 
-            onClick={handleGenerate}
-            disabled={isGenerating || !selectedArtist}
-            className="bg-accent text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-accent-hover disabled:opacity-50 flex items-center gap-2"
+            onClick={selectedArtist ? handleGenerate : handleSearch}
+            disabled={isGenerating || (!selectedArtist && !query)}
+            className="bg-accent text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-accent-hover disabled:opacity-50 flex items-center gap-2 min-w-[100px] justify-center"
           >
-            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-            Generate
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Generating
+              </>
+            ) : selectedArtist ? (
+              <>
+                <Settings className="w-4 h-4" />
+                Generate
+              </>
+            ) : (
+              <>
+                <Search className="w-4 h-4" />
+                Search
+              </>
+            )}
           </button>
         </div>
       </header>

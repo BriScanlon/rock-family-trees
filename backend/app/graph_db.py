@@ -84,17 +84,17 @@ class Neo4jClient:
     @staticmethod
     def _get_subgraph_tx(tx, mbid, depth):
         # Query to get bands and their members in the neighborhood
-        # We use a variable length path to find all related bands and artists
+        # max_hops must be a literal in Cypher (cannot be a parameter)
+        max_hops = depth * 2
         query = (
             "MATCH (root:Band {mbid: $mbid}) "
-            "MATCH path = (root)-[:MEMBER_OF*0..$max_hops]-(target) "
+            f"MATCH path = (root)-[:MEMBER_OF*0..{max_hops}]-(target) "
             "WITH nodes(path) AS nodes, relationships(path) AS rels "
             "UNWIND nodes AS n "
             "UNWIND rels AS r "
             "RETURN DISTINCT n, r"
         )
-        # depth * 2 because Band -> Artist -> Band is 2 hops
-        result = tx.run(query, mbid=mbid, max_hops=depth * 2)
+        result = tx.run(query, mbid=mbid)
         
         bands = {}
         for record in result:
@@ -106,9 +106,9 @@ class Neo4jClient:
                 if b_id not in bands:
                     bands[b_id] = {
                         "id": b_id,
-                        "name": node["name"],
-                        "start_year": node["start_year"],
-                        "end_year": node["end_year"],
+                        "name": node.get("name"),
+                        "start_year": node.get("start_year"),
+                        "end_year": node.get("end_year"),
                         "all_members": []
                     }
             
@@ -117,13 +117,17 @@ class Neo4jClient:
                 artist = rel.start_node
                 band = rel.end_node
                 b_id = band["mbid"]
-                if b_id in bands:
+                
+                a_id = artist.get("mbid")
+                a_name = artist.get("name")
+
+                if b_id in bands and a_id and a_name:
                     member_data = {
-                        "artist_id": artist["mbid"],
-                        "artist_name": artist["name"],
-                        "role": rel["role"],
-                        "start_year": rel["start_year"],
-                        "end_year": rel["end_year"],
+                        "artist_id": a_id,
+                        "artist_name": a_name,
+                        "role": rel.get("role"),
+                        "start_year": rel.get("start_year"),
+                        "end_year": rel.get("end_year"),
                         "position": rel.get("position")
                     }
                     # Avoid duplicates

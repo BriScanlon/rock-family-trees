@@ -42,7 +42,7 @@ def process_tree(self, job_id, artist_id, depth):
         # 3. Cartography
         print(f"Task {task_id}: Calculating Layout")
         self.update_state(state='PROGRESS', meta={'progress': 70})
-        cartographer = Cartographer(graph)
+        cartographer = Cartographer(graph, root_artist_id=artist_id)
         cartographer.calculate_timeline()
         cartographer.route_edges()
         layout = cartographer.get_coordinates()
