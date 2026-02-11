@@ -11,11 +11,10 @@ class Artist:
         self.output_path = output_path
         
         # Determine Canvas Size
-        self.width = 3000 # Wider canvas for clusters
+        self.width = 2480 
         max_y = 2000
         for v in self.versions.values():
             max_y = max(max_y, v['y'] + 400)
-            self.width = max(self.width, v['x'] + v['width'] + 200)
             
         self.dwg = svgwrite.Drawing(self.output_path, profile='full', size=(f"{self.width}px", f"{max_y}px"))
         
@@ -46,78 +45,81 @@ class Artist:
             vx, vy = v['x'], v['y']
             w = v['width']
             
-            # Header: Band Name
-            # Center text on the version box
-            center_x = vx
-            
+            # Header: Band Name (Left Aligned)
             self.dwg.add(self.dwg.text(v['band_name'], 
-                                       insert=(center_x, vy), 
+                                       insert=(vx, vy), 
                                        font_family="Impact, sans-serif", 
                                        font_size="24", 
-                                       text_anchor="middle",
+                                       text_anchor="start",
                                        fill='black'))
             
-            # Sub-Header
+            # Sub-Header (Left Aligned)
             self.dwg.add(self.dwg.text(v['sublabel'], 
-                                       insert=(center_x, vy + 15), 
+                                       insert=(vx, vy + 15), 
                                        font_family="Arial Narrow, sans-serif", 
                                        font_size="12", 
-                                       text_anchor="middle",
+                                       text_anchor="start",
                                        fill='black'))
 
             # Horizontal Beam
             beam_y = v['beam_y']
-            beam_start_x = vx - (w / 2)
-            beam_end_x = vx + (w / 2)
-            
-            self.dwg.add(self.dwg.line(start=(beam_start_x, beam_y), 
-                                       end=(beam_end_x, beam_y), 
+            self.dwg.add(self.dwg.line(start=(vx, beam_y), 
+                                       end=(vx + w, beam_y), 
                                        stroke="black", stroke_width=2))
             
             # Member Ticks
-            # Find members for this version
             version_members = [m for m in self.members if m['version_id'] == v['id']]
             for m in version_members:
-                # Tick from Beam down to just above member name
-                # m['y'] is where the name starts. 
-                # Let's drop the tick to m['y'] - 12 (approx top of text)
-                self.dwg.add(self.dwg.line(start=(m['x'], beam_y), 
-                                           end=(m['x'], m['y'] - 12), 
+                # Tick from Beam down
+                # Use m['x'] + offset to center tick on member text?
+                # If text is left aligned at m['x'], tick should probably be at m['x'] + 10?
+                # Let's align tick with the start of the name for now, or slight offset.
+                tick_x = m['x'] + 5 
+                self.dwg.add(self.dwg.line(start=(tick_x, beam_y), 
+                                           end=(tick_x, m['y'] - 12), 
                                            stroke="black", stroke_width=1))
 
     def draw_members(self):
         for m in self.members:
-            # Name (Bold)
+            # Name (Bold, Left Aligned)
             self.dwg.add(self.dwg.text(m['name'], 
                                        insert=(m['x'], m['y']), 
                                        font_family="Arial Narrow, sans-serif", 
                                        font_weight="bold",
                                        font_size="12", 
-                                       text_anchor="middle",
+                                       text_anchor="start",
                                        fill='black'))
             
-            # Role (Regular) - clean up role string
-            role = m['role'].split(',')[0].strip().lower()
+            # Role (Regular, Left Aligned)
+            raw_role = m.get('role') or ""
+            role = raw_role.split(',')[0].strip().lower()
             self.dwg.add(self.dwg.text(role, 
                                        insert=(m['x'], m['y'] + 10), 
                                        font_family="Arial Narrow, sans-serif", 
                                        font_size="10", 
-                                       text_anchor="middle",
+                                       text_anchor="start",
                                        fill='black'))
 
     def draw_connections(self):
         for edge in self.edges:
+            # Adjust start/end X to match the "Tick" position logic (x + 5)
+            # Cartographer provided raw x from member.
+            # In draw_versions, I used x + 5 for ticks.
+            # I should apply that offset here too so lines connect to ticks/names properly.
+            
+            x1 = edge['x1'] + 5
+            x2 = edge['x2'] + 5
+            
             if edge['type'] == 'continuity':
-                # Simple line
-                self._draw_line(edge['x1'], edge['y1'], edge['x2'], edge['y2'])
+                self._draw_line(x1, edge['y1'], x2, edge['y2'])
             
             elif edge['type'] == 'migration':
-                self._draw_elbow(edge['x1'], edge['y1'], edge['x2'], edge['y2'], edge.get('note'))
+                self._draw_elbow(x1, edge['y1'], x2, edge['y2'], edge.get('note'))
 
     def draw_all(self):
         self.draw_versions()
         self.draw_members()
-        self.draw_connections()
+        # self.draw_connections()
 
     def save(self):
         self.dwg.save()
