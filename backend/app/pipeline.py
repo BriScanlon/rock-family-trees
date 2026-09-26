@@ -15,7 +15,7 @@ ARTIFACT_DIR = os.getenv("ARTIFACT_DIR", "artifacts")
 
 class Options(dict):
     DEFAULTS = {
-        "depth": 2, "max_bands": 24, "title": None, "subtitle": None, "paper": "A1",
+        "depth": 2, "max_bands": 24, "title": None, "subtitle": None, "paper": "auto",
         "hand_drawn": False, "coloured_lines": False, "aged_paper": False, "timeline": False,
         "lettering": "auto",
         "refresh": False,

@@ -42,7 +42,7 @@ class GenerationRequest(BaseModel):
     max_bands: int = Field(24, ge=1, le=60)
     title: Optional[str] = Field(None, max_length=120)
     subtitle: Optional[str] = Field(None, max_length=200)
-    paper: str = Field("A1", pattern="^(A0|A1|A2|A3|A4|none)$")
+    paper: str = Field("auto", pattern="^(auto|A0|A1|A2|A3|A4|none)$")
     hand_drawn: bool = False
     coloured_lines: bool = False
     aged_paper: bool = False

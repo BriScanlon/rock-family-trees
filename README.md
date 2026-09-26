@@ -61,11 +61,11 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `depth` | 2 | 1 = just the band, 2 = plus members' other bands, 3–4 = further out |
 | `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
 | `title`, `subtitle` | auto | Poster heading |
-| `paper` | `A1` | `A0`–`A4` (portrait or landscape chosen automatically) or `none` |
+| `paper` | `auto` | `auto` picks the smallest A-size on which the smallest text still prints at ≥ 6.5pt; or `A0`–`A4` (orientation chosen automatically) or `none` |
 | `lettering` | `auto` | `classic` (neat architect's hand, as on Frame's 60s/70s rock trees), `heavy` (tall narrow capitals, as on his Black Sabbath / Ozzy tree) or `auto` (picked from the band's MusicBrainz genres) |
 | `hand_drawn` | false | Slight ink wobble on lines and boxes (Frame used a ruler) |
 | `aged_paper` | false | Cream paper tint instead of white |
-| `timeline` | false | Year scale down both sides |
+| `timeline` | false | Year scale down both sides; also switches to a strict time grid (every line-up at its date's height), which uses more paper |
 | `coloured_lines` | false | Give each musician's lines their own colour |
 | `refresh` | false | Ignore the cache and re-fetch from MusicBrainz |
 

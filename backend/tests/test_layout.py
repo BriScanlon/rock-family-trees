@@ -12,7 +12,7 @@ from app.refiner import Refiner
 def layout():
     harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=4)
     tree = Refiner(today=2026.5).build(harvest)
-    return Cartographer(tree, paper="A1").layout()
+    return Cartographer(tree, paper="auto").layout()
 
 
 def test_boxes_in_a_lane_never_overlap(layout):
@@ -25,11 +25,35 @@ def test_boxes_in_a_lane_never_overlap(layout):
             assert a["y"] + a["footprint"] <= b["y"], (a["id"], b["id"])
 
 
-def test_time_flows_down_the_page(layout):
-    boxes = sorted(layout["boxes"], key=lambda b: b["start"])
+def test_time_flows_down_each_lane_and_every_move_goes_down(layout):
+    lanes = {}
+    for b in layout["boxes"]:
+        lanes.setdefault(b["lane"], []).append(b)
+    for boxes in lanes.values():
+        boxes.sort(key=lambda b: b["start"])
+        assert [b["y"] for b in boxes] == sorted(b["y"] for b in boxes)
+    by_id = {b["id"]: b for b in layout["boxes"]}
+    for e in layout["edges"]:
+        a, b = by_id[e["from"]], by_id[e["to"]]
+        if a["lane"] != b["lane"]:
+            assert b["y"] > a["y"] + a["footprint"], (e["from"], e["to"])
+
+
+def test_timeline_mode_keeps_a_strict_time_grid():
+    harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=4)
+    L = Cartographer(Refiner(today=2026.5).build(harvest), timeline=True).layout()
+    boxes = sorted(L["boxes"], key=lambda b: b["start"])
     for a, b in zip(boxes, boxes[1:]):
         if round(a["start"] * 12) < round(b["start"] * 12):
             assert a["y"] < b["y"]
+
+
+def test_text_is_readable_in_print(layout):
+    assert layout["stats"]["paper"] == "A0"  # a 12-band family needs the big sheet
+    assert layout["stats"]["smallest_text_pt"] >= 6.5
+    small = Cartographer(Refiner(today=2026.5).build(
+        harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=1)), paper="auto").layout()
+    assert small["stats"]["paper"] in ("A3", "A2") and small["stats"]["smallest_text_pt"] >= 6.5
 
 
 def test_everything_fits_on_the_paper(layout):
@@ -60,7 +84,7 @@ def test_frame_style_notes(layout):
 def test_members_hang_side_by_side(layout):
     yb = next(b for b in layout["boxes"] if b["band_name"] == "The Yardbirds" and b["number"] == 1)
     assert [m["lines"] for m in yb["members"]][:2] == [["KEITH", "RELF"], ["CHRIS", "DREJA"]]
-    assert yb["members"][0]["roles"] == ["vocals", "harmonica"]
+    assert yb["members"][0]["roles"] == ["vocals"]  # one instrument each, as Frame writes them
     xs = [m["cx"] for m in yb["members"]]
     assert xs == sorted(xs) and len(set(xs)) == len(xs)
 
@@ -83,7 +107,7 @@ def test_each_musician_line_runs_down_to_the_next_lineup(layout):
 def test_svg_is_valid_and_self_contained(layout, tmp_path):
     svg = Artist(layout, str(tmp_path / "t.svg")).render()
     root = ET.fromstring(svg)
-    assert root.tag.endswith("svg") and {root.get("width"), root.get("height")} == {"594mm", "841mm"}
+    assert root.tag.endswith("svg") and {root.get("width"), root.get("height")} == {"841mm", "1189mm"}  # A0
     assert "@font-face" in svg and "http" not in svg.replace("http://www.w3.org/2000/svg", "")
     assert "THE YARDBIRDS FAMILY TREE" in svg
 

@@ -30,7 +30,7 @@ export default function App() {
   const [samples, setSamples] = useState([])
 
   const [options, setOptions] = useState({
-    depth: 2, max_bands: 24, title: '', paper: 'A1',
+    depth: 2, max_bands: 24, title: '', paper: 'auto',
     lettering: 'auto', hand_drawn: false, aged_paper: false, timeline: false, coloured_lines: false, refresh: false,
   })
   const [job, setJob] = useState(null) // latest status payload
@@ -222,6 +222,7 @@ export default function App() {
               Paper
               <select value={options.paper} onChange={(e) => setOption('paper', e.target.value)}
                       className="w-full mt-1 px-2 py-1 border-2 border-border bg-white">
+                <option value="auto">Auto — smallest sheet that keeps the text readable</option>
                 {['A0', 'A1', 'A2', 'A3', 'A4'].map((p) => <option key={p} value={p}>{p} poster</option>)}
                 <option value="none">Fit to content</option>
               </select>
@@ -252,7 +253,7 @@ export default function App() {
                 {recent.map((r) => (
                   <li key={r.jobId}>
                     <button className="underline decoration-dotted text-left" onClick={() => setResult(r)}>{r.title || r.name}</button>
-                    {r.stats && <span className="text-xs text-text-secondary"> · {r.stats.bands} bands</span>}
+                    {r.stats && <span className="text-xs text-text-secondary"> · {r.stats.bands} bands{r.stats.paper ? ` · ${r.stats.paper}` : ''}</span>}
                   </li>
                 ))}
               </ul>
@@ -271,7 +272,15 @@ export default function App() {
               <p className="text-sm text-text-secondary">{job.message}</p>
             </div>
           ) : result ? (
-            <TreeViewer key={result.url} src={result.url} title={result.title} />
+            <>
+              <TreeViewer key={result.url} src={result.url} title={result.title} />
+              {result.stats?.paper && (
+                <div className={`absolute top-3 left-3 ink-box px-3 py-2 text-sm ${result.stats.smallest_text_pt < 6.5 ? 'text-red-900' : ''}`}>
+                  {result.stats.paper} poster · smallest text prints at {result.stats.smallest_text_pt}pt
+                  {result.stats.smallest_text_pt < 6.5 && ' — try a bigger sheet or fewer bands'}
+                </div>
+              )}
+            </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center p-8">
               <div className="ink-box p-8 max-w-lg text-center space-y-3 rotate-[-1deg]">

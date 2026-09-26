@@ -26,26 +26,30 @@ MARGIN = 50
 TITLE_H = 250
 FOOTER_H = 190
 
-DATE_SIZE = 12        # dates stacked beside the band name
-HEADER_H = 50         # top of block to the ruled bar
+DATE_SIZE = 13        # dates stacked beside the band name
+HEADER_H = 44         # top of block to the ruled bar
 TICK = 9
-ROLE_SIZE = 12
-ROLE_LINE = 13
+ROLE_SIZE = 13
+ROLE_LINE = 14
 NOTE_GAP = 18
 NOTE_W = 190
-NOTE_SIZE = 13
-NOTE_LINE = 16
+MIN_INLINE_NOTE_W = 140  # notes go in spare room beside a narrow line-up when at least this wide
+EDGE_GAP = 52         # room above a line-up for lines arriving from another band
+NOTE_SIZE = 14
+NOTE_LINE = 17
 MAX_MEMBERS = 12
 MAX_NOTES = 6
 
 PX_PER_YEAR = 75
 MIN_STEP = 14
 MAX_STEP = 110
-V_GAP = 44            # minimum gap between line-ups in one lane
+V_GAP = 28            # minimum gap between line-ups in one lane
 LANE_REUSE_YEARS = 0.1
 TRACK_SPACING = 7
 MAX_STRETCH = 1.8     # most the rows may be spread to fill the sheet
 STAGGER = 6           # separation of parallel horizontal runs leaving/entering a line-up
+
+MIN_PRINT_PT = 6.5     # smallest comfortable printed text size
 
 PAPER_MM = {"A0": (841, 1189), "A1": (594, 841), "A2": (420, 594), "A3": (297, 420), "A4": (210, 297)}
 
@@ -56,6 +60,7 @@ class Cartographer:
         self.ls = dict(STYLES.get(lettering, STYLES["classic"]), name=lettering if lettering in STYLES else "classic")
         self.timeline = timeline
         self.axis_w = AXIS_W if timeline else 0
+        self.auto_paper = paper == "auto"
         self.paper = paper if paper in PAPER_MM else None
         self.subtitle = subtitle
         self.boxes = {}
@@ -72,12 +77,14 @@ class Cartographer:
         self.lane_count = max(lanes.values()) + 1
         for box in self.boxes.values():
             box["lane"] = lanes[box["band_id"]]
-        anchors = self._assign_rows()
-
-        self.lane_w = [0] * self.lane_count
-        for box in self.boxes.values():
-            self.lane_w[box["lane"]] = max(self.lane_w[box["lane"]], box["w"])
+        self._layout_notes()
+        # A strict time grid is only needed when a year scale is drawn; otherwise
+        # each lane packs tightly, as Frame's trees do (every line-up is dated).
+        anchors = self._assign_rows() if self.timeline else self._compact_rows()
         content_w = self._lane_x(self.lane_count) + self.axis_w + MARGIN
+        if self.auto_paper:
+            content_h = max(b["y"] + b["footprint"] for b in self.boxes.values()) + 60
+            self.paper = self._choose_paper(content_w, content_h + FOOTER_H)
         anchors = self._fill_page(content_w, anchors)
         for box in self.boxes.values():
             self._place(box, self._lane_x(box["lane"]))
@@ -101,7 +108,8 @@ class Cartographer:
             "trunks": trunks, "edges": edges,
             "footer_y": height - FOOTER_H + 30,
             "stats": {"bands": len(bands), "lineups": len(self.boxes),
-                      "people": len({s.person_id for b in bands for s in b.stints})},
+                      "people": len({s.person_id for b in bands for s in b.stints}),
+                      **self._print_report(width, height)},
         }
 
     def _lane_x(self, lane):
@@ -166,8 +174,6 @@ class Cartographer:
             content_w = max(ncols * col_w, name_w + 12 + 60)
             notes_by_lineup = [self._notes(band, lu, band.lineups[i + 1] if i + 1 < len(band.lineups) else None)
                                for i, lu in enumerate(band.lineups)]
-            has_notes = any(notes_by_lineup)
-            w = content_w + (NOTE_GAP + NOTE_W if has_notes else 0)
 
             for i, lu in enumerate(band.lineups):
                 cols = columns[i]
@@ -175,7 +181,7 @@ class Cartographer:
                 bottom = HEADER_H
                 for m in lu.members[:MAX_MEMBERS]:
                     lines = _split_name(m.name.upper())
-                    roles = list(m.roles[:2])  # one instrument per line, as Frame writes them
+                    roles = list(m.roles[:1])  # Frame gives each musician one instrument
                     person = people.get(m.person_id)
                     if person and person.died is not None and lu.start <= person.died <= lu.end + 0.3:
                         roles.append(f"(died {person.died_label})")
@@ -187,7 +193,6 @@ class Cartographer:
                 members.sort(key=lambda m: m["col"])
                 overflow = len(lu.members) - len(members)
                 notes_text = " ".join(notes_by_lineup[i][:MAX_NOTES])
-                notes = wrap(notes_text, HAND, NOTE_SIZE, NOTE_W) if notes_text else []
                 h = bottom + (ROLE_LINE if overflow else 0)
                 box_id = f"{band.id}#{lu.number}"
                 self.boxes[box_id] = {
@@ -196,9 +201,9 @@ class Cartographer:
                     "dates": [lu.start_label.upper(), lu.end_label.upper()],
                     "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
                     "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
-                    "level": band.level, "w": w, "content_w": content_w, "h": h,
-                    "members": members, "overflow": overflow, "notes": notes,
-                    "footprint": max(h, HEADER_H - 4 + len(notes) * NOTE_LINE + 4),
+                    "level": band.level, "content_w": content_w, "h": h, "band_start": band.start,
+                    "members_w": (max((m["col"] for m in members), default=0) + 1) * col_w,
+                    "members": members, "overflow": overflow, "notes_text": notes_text,
                 }
                 self.box_order.append(box_id)
 
@@ -206,13 +211,75 @@ class Cartographer:
         """Fix a block's absolute position and its members' coordinates."""
         box["x"] = x
         box["bar_y"] = box["y"] + HEADER_H
-        box["notes_x"] = x + box["content_w"] + NOTE_GAP
+        box["notes_x"] = x + box["notes_dx"]
         for m in box["members"]:
             m["cx"] = x + m["col"] * self.ls["col_w"] + self.ls["col_w"] / 2
             m["y_name"] = box["y"] + m["dy_name"]
             m["bottom"] = box["y"] + m["dy_bottom"]
         cxs = [m["cx"] for m in box["members"]] or [x + self.ls["col_w"] / 2]
         box["bar"] = (min(x, min(cxs) - 12), max(cxs) + 12)
+
+    def _layout_notes(self):
+        """Put each line-up's notes in the spare room to the right of its
+        members when there is enough, otherwise in a notes column beside the
+        lane. Only lanes that need the column get one."""
+        lane_content = defaultdict(float)
+        for b in self.boxes.values():
+            lane_content[b["lane"]] = max(lane_content[b["lane"]], b["content_w"])
+        self.lane_w = [0] * self.lane_count
+        for b in self.boxes.values():
+            lc = lane_content[b["lane"]]
+            spare = lc - b["members_w"] - NOTE_GAP
+            if not b["notes_text"]:
+                b["notes"], b["notes_dx"], width = [], lc, lc
+            elif spare >= MIN_INLINE_NOTE_W:
+                b["notes"] = wrap(b["notes_text"], HAND, NOTE_SIZE, min(spare, NOTE_W * 1.4))
+                b["notes_dx"], width = b["members_w"] + NOTE_GAP, lc
+            else:
+                b["notes"] = wrap(b["notes_text"], HAND, NOTE_SIZE, NOTE_W)
+                b["notes_dx"], width = lc + NOTE_GAP, lc + NOTE_GAP + NOTE_W
+            b["footprint"] = max(b["h"], HEADER_H + 2 + len(b["notes"]) * NOTE_LINE)
+            b["w"] = width
+            self.lane_w[b["lane"]] = max(self.lane_w[b["lane"]], width)
+
+    def _compact_rows(self):
+        """Pack each lane tightly. Time order is kept where it matters: a
+        line-up sits below the previous one in its lane and below every
+        line-up its musicians arrive from."""
+        order = sorted(self.boxes.values(), key=lambda b: (b["start"], b["band_start"], b["band_name"], b["number"]))
+        sources = defaultdict(list)
+        for apps in self.appearances.values():
+            for (ba, la), (bb, lb) in zip(apps, apps[1:]):
+                a, b = self.boxes[f"{ba.id}#{la.number}"], self.boxes[f"{bb.id}#{lb.number}"]
+                if a is not b and a["lane"] != b["lane"]:
+                    sources[b["id"]].append(a)
+        lane_bottom = defaultdict(lambda: -math.inf)
+        for b in order:
+            y = max([TITLE_H, lane_bottom[b["lane"]] + V_GAP] +
+                    [a["y"] + a["footprint"] + EDGE_GAP for a in sources[b["id"]] if "y" in a])
+            b["y"] = y
+            lane_bottom[b["lane"]] = y + b["footprint"]
+        return sorted((b["start"], b["y"]) for b in order)
+
+    def _choose_paper(self, w, h):
+        """Smallest sheet on which the smallest text prints at MIN_PRINT_PT or more."""
+        smallest_px = min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE)
+        for paper in ("A3", "A2", "A1", "A0"):
+            short, long_ = PAPER_MM[paper]
+            mm_per_px = min(long_ / w, short / h) if w > h else min(short / w, long_ / h)
+            if smallest_px * mm_per_px * 72 / 25.4 >= MIN_PRINT_PT:
+                return paper
+        return "A0"
+
+    def _print_report(self, width, height):
+        """How big the smallest text will actually print on the chosen paper."""
+        if not self.paper:
+            return {}
+        short, long_ = PAPER_MM[self.paper]
+        mm_per_px = (long_ if width > height else short) / width
+        pt = lambda px: round(px * mm_per_px * 72 / 25.4, 1)
+        return {"paper": self.paper, "smallest_text_pt": pt(min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE)),
+                "name_text_pt": pt(self.ls["member_size"])}
 
     def _notes(self, band, lu, nxt):
         """Frame-style annotations about how this line-up ended, as sentences."""

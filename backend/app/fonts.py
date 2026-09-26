@@ -25,10 +25,10 @@ FACES = {
 # hand of his 60s/70s rock trees; "heavy" is the tall, narrow, thin-stroked
 # capitals of trees like Black Sabbath / Ozzy Osbourne.
 STYLES = {
-    "classic": {"family": HAND, "weight": 400, "bold": True, "name_size": 28, "member_size": 14,
-                "member_line": 16, "col_w": 110, "title": "outline"},
-    "heavy": {"family": LETTERING, "weight": 700, "bold": False, "name_size": 44, "member_size": 22,
-              "member_line": 19, "col_w": 84, "title": "plain"},
+    "classic": {"family": HAND, "weight": 400, "bold": True, "name_size": 30, "member_size": 17,
+                "member_line": 19, "col_w": 118, "title": "outline"},
+    "heavy": {"family": LETTERING, "weight": 700, "bold": False, "name_size": 46, "member_size": 25,
+              "member_line": 21, "col_w": 92, "title": "plain"},
 }
 
 HEAVY_GENRES = ("metal", "hard rock", "doom", "thrash", "stoner", "sludge", "grunge", "hardcore", "punk",
