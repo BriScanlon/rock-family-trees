@@ -62,6 +62,7 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
 | `title`, `subtitle` | auto | Poster heading |
 | `paper` | `A1` | `A0`–`A4` (portrait or landscape chosen automatically) or `none` |
+| `lettering` | `auto` | `classic` (neat architect's hand, as on Frame's 60s/70s rock trees), `heavy` (tall narrow capitals, as on his Black Sabbath / Ozzy tree) or `auto` (picked from the band's MusicBrainz genres) |
 | `hand_drawn` | false | Slight ink wobble on lines and boxes (Frame used a ruler) |
 | `aged_paper` | false | Cream paper tint instead of white |
 | `timeline` | false | Year scale down both sides |

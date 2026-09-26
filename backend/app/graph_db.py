@@ -52,10 +52,10 @@ class Neo4jStore:
         tx.run(
             f"MERGE (n:{label} {{mbid: $mbid}}) "
             "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
-            "n.begin = $begin, n.end = $end, n.ended = $ended, n.fetched_at = datetime()",
+            "n.begin = $begin, n.end = $end, n.ended = $ended, n.genres = $genres, n.fetched_at = datetime()",
             mbid=record["mbid"], name=record["name"], type=record.get("type"),
             disambiguation=record.get("disambiguation"), begin=record.get("begin"),
-            end=record.get("end"), ended=record.get("ended", False),
+            end=record.get("end"), ended=record.get("ended", False), genres=record.get("genres") or [],
         )
         for m in record.get("memberships", []):
             tx.run(
@@ -92,6 +92,7 @@ class Neo4jStore:
             "mbid": n["mbid"], "name": n.get("name"), "type": n.get("type"),
             "disambiguation": n.get("disambiguation") or "",
             "begin": n.get("begin"), "end": n.get("end"), "ended": bool(n.get("ended")),
+            "genres": list(n.get("genres") or []),
             "memberships": [
                 {"person_id": r["pid"], "person_name": r["pname"], "band_id": r["bid"],
                  "band_name": r["bname"], "begin": r["begin"], "end": r["end"],

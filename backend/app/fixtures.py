@@ -193,6 +193,7 @@ def build_records():
         band = {
             "mbid": _bid(key), "name": name, "type": "Group", "disambiguation": "",
             "begin": begin, "end": end, "ended": end is not None, "memberships": [],
+            "genres": ["blues rock", "rhythm and blues"] if key == "yardbirds" else [],
         }
         for person, m_begin, m_end, attrs in members:
             m = {

@@ -18,7 +18,7 @@
 import math
 from collections import defaultdict
 
-from app.fonts import HAND, LETTERING, text_width, wrap
+from app.fonts import HAND, STYLES, text_width, wrap
 
 GUTTER = 64
 AXIS_W = 80           # year scale on each side (optional)
@@ -26,14 +26,9 @@ MARGIN = 50
 TITLE_H = 250
 FOOTER_H = 190
 
-NAME_SIZE = 44        # band name
-NAME_WEIGHT = 700
 DATE_SIZE = 12        # dates stacked beside the band name
 HEADER_H = 50         # top of block to the ruled bar
-COL_W = 84            # one musician's column
 TICK = 9
-MEMBER_SIZE = 22      # musician names
-MEMBER_LINE = 19
 ROLE_SIZE = 12
 ROLE_LINE = 13
 NOTE_GAP = 18
@@ -56,8 +51,9 @@ PAPER_MM = {"A0": (841, 1189), "A1": (594, 841), "A2": (420, 594), "A3": (297, 4
 
 
 class Cartographer:
-    def __init__(self, tree, paper="A1", subtitle=None, timeline=False):
+    def __init__(self, tree, paper="A1", subtitle=None, timeline=False, lettering="classic"):
         self.tree = tree
+        self.ls = dict(STYLES.get(lettering, STYLES["classic"]), name=lettering if lettering in STYLES else "classic")
         self.timeline = timeline
         self.axis_w = AXIS_W if timeline else 0
         self.paper = paper if paper in PAPER_MM else None
@@ -95,7 +91,7 @@ class Cartographer:
 
         return {
             "width": width, "height": height, "paper": self.paper,
-            "title": self.tree.title, "subtitle": self.subtitle,
+            "title": self.tree.title, "subtitle": self.subtitle, "lettering": self.ls,
             "timeline": self.timeline,
             "axis": {"left": offset_x + MARGIN + AXIS_W / 2,
                      "right": offset_x + content_w - MARGIN - AXIS_W / 2,
@@ -160,13 +156,14 @@ class Cartographer:
         people = self.tree.people
         for band in bands:
             name = band.name.upper()
-            name_size = NAME_SIZE
-            while name_size > 26 and text_width(name, LETTERING, name_size, NAME_WEIGHT) > 5 * COL_W:
+            ls, col_w = self.ls, self.ls["col_w"]
+            name_size = ls["name_size"]
+            while name_size > ls["name_size"] * 0.6 and text_width(name, ls["family"], name_size, ls["weight"]) > 5 * col_w:
                 name_size -= 2
-            name_w = text_width(name, LETTERING, name_size, NAME_WEIGHT)
+            name_w = text_width(name, ls["family"], name_size, ls["weight"])
             columns = self._columns(band)
             ncols = max(max(c.values(), default=0) for c in columns) + 1
-            content_w = max(ncols * COL_W, name_w + 12 + 60)
+            content_w = max(ncols * col_w, name_w + 12 + 60)
             notes_by_lineup = [self._notes(band, lu, band.lineups[i + 1] if i + 1 < len(band.lineups) else None)
                                for i, lu in enumerate(band.lineups)]
             has_notes = any(notes_by_lineup)
@@ -182,8 +179,8 @@ class Cartographer:
                     person = people.get(m.person_id)
                     if person and person.died is not None and lu.start <= person.died <= lu.end + 0.3:
                         roles.append(f"(died {person.died_label})")
-                    y_name = HEADER_H + TICK + MEMBER_SIZE * 0.8
-                    y_bottom = y_name + (len(lines) - 1) * MEMBER_LINE + len(roles) * ROLE_LINE + 5
+                    y_name = HEADER_H + TICK + ls["member_size"] * 0.8
+                    y_bottom = y_name + (len(lines) - 1) * ls["member_line"] + len(roles) * ROLE_LINE + 5
                     bottom = max(bottom, y_bottom)
                     members.append({"person_id": m.person_id, "col": cols[m.person_id],
                                     "lines": lines, "roles": roles, "dy_name": y_name, "dy_bottom": y_bottom})
@@ -211,10 +208,10 @@ class Cartographer:
         box["bar_y"] = box["y"] + HEADER_H
         box["notes_x"] = x + box["content_w"] + NOTE_GAP
         for m in box["members"]:
-            m["cx"] = x + m["col"] * COL_W + COL_W / 2
+            m["cx"] = x + m["col"] * self.ls["col_w"] + self.ls["col_w"] / 2
             m["y_name"] = box["y"] + m["dy_name"]
             m["bottom"] = box["y"] + m["dy_bottom"]
-        cxs = [m["cx"] for m in box["members"]] or [x + COL_W / 2]
+        cxs = [m["cx"] for m in box["members"]] or [x + self.ls["col_w"] / 2]
         box["bar"] = (min(x, min(cxs) - 12), max(cxs) + 12)
 
     def _notes(self, band, lu, nxt):

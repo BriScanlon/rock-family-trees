@@ -46,6 +46,7 @@ class GenerationRequest(BaseModel):
     hand_drawn: bool = False
     coloured_lines: bool = False
     aged_paper: bool = False
+    lettering: str = Field("auto", pattern="^(auto|classic|heavy)$")
     timeline: bool = False
     refresh: bool = False
     detail_level: Optional[int] = None  # accepted for backwards compatibility; unused

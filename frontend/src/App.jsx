@@ -31,7 +31,7 @@ export default function App() {
 
   const [options, setOptions] = useState({
     depth: 2, max_bands: 24, title: '', paper: 'A1',
-    hand_drawn: false, aged_paper: false, timeline: false, coloured_lines: false, refresh: false,
+    lettering: 'auto', hand_drawn: false, aged_paper: false, timeline: false, coloured_lines: false, refresh: false,
   })
   const [job, setJob] = useState(null) // latest status payload
   const [error, setError] = useState(null)
@@ -208,6 +208,15 @@ export default function App() {
               <input type="text" value={options.title} placeholder="THE … FAMILY TREE" maxLength={120}
                      onChange={(e) => setOption('title', e.target.value)}
                      className="w-full mt-1 px-2 py-1 border-2 border-border bg-white" />
+            </label>
+            <label className="block text-sm">
+              Lettering
+              <select value={options.lettering} onChange={(e) => setOption('lettering', e.target.value)}
+                      className="w-full mt-1 px-2 py-1 border-2 border-border bg-white">
+                <option value="auto">Match the music (from MusicBrainz genres)</option>
+                <option value="classic">Classic — neat architect's hand (60s/70s rock)</option>
+                <option value="heavy">Heavy — tall narrow capitals (metal, hard rock)</option>
+              </select>
             </label>
             <label className="block text-sm">
               Paper

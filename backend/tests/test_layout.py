@@ -83,7 +83,7 @@ def test_each_musician_line_runs_down_to_the_next_lineup(layout):
 def test_svg_is_valid_and_self_contained(layout, tmp_path):
     svg = Artist(layout, str(tmp_path / "t.svg")).render()
     root = ET.fromstring(svg)
-    assert root.tag.endswith("svg") and root.get("width") == "594mm"
+    assert root.tag.endswith("svg") and {root.get("width"), root.get("height")} == {"594mm", "841mm"}
     assert "@font-face" in svg and "http" not in svg.replace("http://www.w3.org/2000/svg", "")
     assert "THE YARDBIRDS FAMILY TREE" in svg
 
@@ -92,7 +92,7 @@ def test_default_style_is_ink_on_white(layout):
     svg = Artist(layout).render()
     assert 'fill="#ffffff"' in svg
     assert 'filter="url(#rough)"' not in svg and 'url(#paper)' not in svg
-    assert "font-family:'Architects Daughter'" in svg and "font-family:'Amatic SC'" in svg
+    assert "font-family:'Architects Daughter'" in svg
     assert ">SAMWELL-SMITH<" in svg  # surname lettered under the first name
     assert svg.count("<rect") == 2  # background and border only: line-ups are not boxed
 
@@ -100,3 +100,15 @@ def test_default_style_is_ink_on_white(layout):
 def test_optional_extras(layout):
     svg = Artist(dict(layout, timeline=True), hand_drawn=True, aged_paper=True).render()
     assert 'filter="url(#rough)"' in svg and 'url(#paper)' in svg and ">1965<" in svg
+
+
+def test_lettering_styles():
+    from app.fonts import lettering_for
+    assert lettering_for(["heavy metal", "hard rock"]) == "heavy"
+    assert lettering_for(["blues rock", "british rhythm & blues"]) == "classic"
+    assert lettering_for([]) == "classic"
+    harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=2)
+    tree = Refiner(today=2026.5).build(harvest)
+    heavy = Artist(Cartographer(tree, lettering="heavy").layout()).render()
+    classic = Artist(Cartographer(tree, lettering="classic").layout()).render()
+    assert "font-family:'Amatic SC'" in heavy and "font-family:'Amatic SC'" not in classic

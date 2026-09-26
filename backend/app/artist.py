@@ -8,9 +8,8 @@ paper tint, a slight ink wobble, a year scale and coloured lines."""
 from datetime import date
 from xml.sax.saxutils import escape
 
-from app.cartographer import (COL_W, DATE_SIZE, MEMBER_LINE, MEMBER_SIZE, NOTE_LINE, NOTE_SIZE, PAPER_MM,
-                              ROLE_LINE, ROLE_SIZE, TICK)
-from app.fonts import HAND, LETTERING, font_face_css, text_width
+from app.cartographer import DATE_SIZE, NOTE_LINE, NOTE_SIZE, PAPER_MM, ROLE_LINE, ROLE_SIZE, TICK
+from app.fonts import HAND, STYLES, font_face_css, text_width
 
 WHITE = "#ffffff"
 AGED = "#f4ecd8"
@@ -27,6 +26,7 @@ class Artist:
     def __init__(self, layout, output_path=None, hand_drawn=False, coloured_lines=False, aged_paper=False,
                  credit=None):
         self.L = layout
+        self.ls = layout.get("lettering") or STYLES["classic"]
         self.output_path = output_path
         self.hand_drawn = hand_drawn
         self.coloured = coloured_lines
@@ -103,7 +103,7 @@ class Artist:
     # ------------------------------------------------------------------
     def _defs(self):
         self._add("<defs><style>")
-        self._add(font_face_css())
+        self._add(font_face_css(frozenset({(HAND, 400), (self.ls["family"], self.ls["weight"])})))
         self._add(f"text{{fill:{INK};font-family:'{HAND}','Comic Sans MS',cursive;}}")
         self._add("</style>")
         self._add('<filter id="rough" x="-2%" y="-2%" width="104%" height="104%">'
@@ -123,13 +123,21 @@ class Artist:
     def _title(self, W):
         """Big open (outlined) hand-drawn capitals with a solid drop shadow."""
         title = self.L["title"].upper()
+        fam, wt = self.ls["family"], self.ls["weight"]
         fit = W - 200
-        size = 130
-        while size > 60 and text_width(title, LETTERING, size, 700) > fit:
+        size = 130 if self.ls["title"] == "plain" else 96
+        while size > 44 and text_width(title, fam, size, wt) > fit:
             size -= 4
         y = 40 + size * 0.85
-        self._text(W / 2, y, title, size, "middle", fit=fit, family=LETTERING, weight=700, letter_spacing="4")
-        tw = min(text_width(title, LETTERING, size, 700) + 4 * len(title), fit)
+        if self.ls["title"] == "outline":  # open capitals with a solid drop shadow
+            self._text(W / 2 + 5, y + 5, title, size, "middle", fit=fit, family=fam, weight=wt, letter_spacing="3",
+                       stroke=INK, stroke_width="3", stroke_linejoin="round")
+            self._text(W / 2, y, title, size, "middle", fit=fit, family=fam, weight=wt, letter_spacing="3",
+                       style=f"fill:{self.paper}", stroke=INK, stroke_width="2.5", stroke_linejoin="round",
+                       paint_order="stroke")
+        else:
+            self._text(W / 2, y, title, size, "middle", fit=fit, family=fam, weight=wt, letter_spacing="4")
+        tw = min(text_width(title, fam, size, wt) + 4 * len(title), fit)
         ly = y + 22
         self._add(f'<line x1="{W / 2 - tw / 2:.0f}" y1="{ly}" x2="{W / 2 + tw / 2:.0f}" y2="{ly}" stroke="{INK}" stroke-width="3"/>')
         self._add(f'<line x1="{W / 2 - tw / 2:.0f}" y1="{ly + 7}" x2="{W / 2 + tw / 2:.0f}" y2="{ly + 7}" stroke="{INK}" stroke-width="1"/>')
@@ -166,8 +174,9 @@ class Artist:
         for b in self.L["boxes"]:
             x, y = b["x"], b["y"]
             # band name, big, with its dates stacked alongside
-            self._text(x, y + b["name_size"] * 0.8, b["name"], b["name_size"], family=LETTERING, weight=700,
-                       halo=True)
+            ls = self.ls
+            self._text(x, y + b["name_size"] * 0.8, b["name"], b["name_size"], family=ls["family"],
+                       weight=ls["weight"], bold=ls["bold"], halo=True)
             dx = x + b["name_w"] + 10
             for i, d in enumerate(b["dates"]):
                 self._text(dx, y + 16 + i * (DATE_SIZE + 3), d, DATE_SIZE, halo=True)
@@ -181,14 +190,14 @@ class Artist:
                 self._add(f'<line x1="{cx:.1f}" y1="{bar_y:.1f}" x2="{cx:.1f}" y2="{bar_y + TICK - 2:.1f}" '
                           f'stroke="{INK}" stroke-width="1.2"/>')
                 for i, line in enumerate(m["lines"]):
-                    self._text(cx, m["y_name"] + i * MEMBER_LINE, line, MEMBER_SIZE, "middle", fit=COL_W - 6,
-                               family=LETTERING, weight=700)
-                ry = m["y_name"] + (len(m["lines"]) - 1) * MEMBER_LINE + ROLE_LINE + 1
+                    self._text(cx, m["y_name"] + i * ls["member_line"], line, ls["member_size"], "middle",
+                               fit=ls["col_w"] - 6, family=ls["family"], weight=ls["weight"])
+                ry = m["y_name"] + (len(m["lines"]) - 1) * ls["member_line"] + ROLE_LINE + 1
                 for i, role in enumerate(m["roles"]):
-                    self._text(cx, ry + i * ROLE_LINE, role, ROLE_SIZE, "middle", fit=COL_W - 4)
+                    self._text(cx, ry + i * ROLE_LINE, role, ROLE_SIZE, "middle", fit=ls["col_w"] - 4)
             if b["overflow"]:
                 last = max(b["members"], key=lambda m: m["cx"])
-                self._text(last["cx"] + COL_W / 2, b["y"] + b["h"], f"+ {b['overflow']} more", ROLE_SIZE, "end")
+                self._text(last["cx"] + ls["col_w"] / 2, b["y"] + b["h"], f"+ {b['overflow']} more", ROLE_SIZE, "end")
             # a paragraph of notes beside the line-up
             for i, note in enumerate(b["notes"]):
                 self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)

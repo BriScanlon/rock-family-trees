@@ -4,6 +4,7 @@ from app.refiner import parse_date, role_words
 BAND_JSON = {
     "id": "jd", "name": "Joy Division", "type": "Group", "disambiguation": "",
     "life-span": {"begin": "1976", "end": "1980-05-18", "ended": True},
+    "genres": [{"name": "post-punk", "count": 9}, {"name": "gothic rock", "count": 3}],
     "relations": [
         {"type": "member of band", "direction": "backward", "begin": "1976", "end": "1980-05-18",
          "ended": True, "attributes": ["original", "lead vocals"],
@@ -28,6 +29,7 @@ def test_normalize_band_keeps_only_memberships():
     m = rec["memberships"][0]
     assert (m["person_id"], m["band_id"], m["attributes"]) == ("ian", "jd", ["original", "lead vocals"])
     assert is_group(rec)
+    assert rec["genres"] == ["post-punk", "gothic rock"]
 
 
 def test_normalize_person_direction():
@@ -82,5 +84,5 @@ def test_client_search_and_retry(monkeypatch):
     assert results[0]["years"] == "1976–1980" and results[0]["country"] == "GB"
     assert client.get_artist("jd")["memberships"][0]["person_name"] == "Ian Curtis"
     assert client.get_artist("missing") is None
-    assert session.requests[2][1] == {"inc": "artist-rels", "fmt": "json"}
+    assert session.requests[2][1] == {"inc": "artist-rels+genres", "fmt": "json"}
     assert "User-Agent" in session.headers

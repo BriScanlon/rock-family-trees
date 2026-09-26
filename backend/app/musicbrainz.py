@@ -7,7 +7,7 @@ without touching the network again:
     {
       "mbid": str, "name": str, "type": "Group" | "Person" | ...,
       "disambiguation": str, "begin": "1976-05" | None, "end": ... | None,
-      "ended": bool,
+      "ended": bool, "genres": ["hard rock", ...],
       "memberships": [   # "member of band" relations, always person -> band
         {"person_id", "person_name", "band_id", "band_name",
          "begin", "end", "ended", "attributes": [..]}
@@ -91,7 +91,7 @@ class MusicBrainzClient:
         return results
 
     def get_artist(self, mbid):
-        data = self._get(f"artist/{mbid}", {"inc": "artist-rels"})
+        data = self._get(f"artist/{mbid}", {"inc": "artist-rels+genres"})
         if data is None:
             return None
         return normalize_artist(data)
@@ -108,6 +108,7 @@ def normalize_artist(data):
         "begin": ls.get("begin"),
         "end": ls.get("end"),
         "ended": bool(ls.get("ended")),
+        "genres": [g["name"] for g in sorted(data.get("genres") or [], key=lambda g: -(g.get("count") or 0))],
         "memberships": [],
     }
     for rel in data.get("relations", []):

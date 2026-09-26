@@ -34,7 +34,8 @@ def test_generate_demo_end_to_end():
     assert status["stats"]["bands"] >= 8
     svg = client.get(status["result_url"])
     assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg+xml")
-    assert "Yardbirds!" in svg.text
+    assert "YARDBIRDS!" in svg.text
+    assert status.get("lettering") in (None, "classic")
     assert client.get(f"/api/tree/{job['job_id']}").json()["tree"]["title"] == "Yardbirds!"
 
 

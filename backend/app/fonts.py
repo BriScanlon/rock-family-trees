@@ -21,6 +21,26 @@ FACES = {
 }
 
 
+# Frame varied his lettering with the music. "classic" is the neat architect's
+# hand of his 60s/70s rock trees; "heavy" is the tall, narrow, thin-stroked
+# capitals of trees like Black Sabbath / Ozzy Osbourne.
+STYLES = {
+    "classic": {"family": HAND, "weight": 400, "bold": True, "name_size": 28, "member_size": 14,
+                "member_line": 16, "col_w": 110, "title": "outline"},
+    "heavy": {"family": LETTERING, "weight": 700, "bold": False, "name_size": 44, "member_size": 22,
+              "member_line": 19, "col_w": 84, "title": "plain"},
+}
+
+HEAVY_GENRES = ("metal", "hard rock", "doom", "thrash", "stoner", "sludge", "grunge", "hardcore", "punk",
+                "industrial", "nu metal", "metalcore", "grindcore", "black metal", "death metal")
+
+
+def lettering_for(genres):
+    """Pick a lettering style from MusicBrainz genre/tag names."""
+    names = [g.lower() for g in genres or []]
+    return "heavy" if any(h in g for g in names for h in HEAVY_GENRES) else "classic"
+
+
 class _Metrics:
     def __init__(self, family, weight):
         self.widths = {}
@@ -66,9 +86,12 @@ def wrap(text, family, size, max_width, weight=400):
 
 
 @lru_cache(maxsize=None)
-def font_face_css():
+def font_face_css(faces=None):
+    """@font-face rules for the given (family, weight) pairs (default: all)."""
     rules = []
     for (family, weight), files in FACES.items():
+        if faces is not None and (family, weight) not in faces:
+            continue
         for fname in files:
             path = os.path.join(FONT_DIR, fname)
             if not os.path.exists(path):
