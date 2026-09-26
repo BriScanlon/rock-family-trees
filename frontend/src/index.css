@@ -1,18 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Inter:wght@400;500;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --color-background: #f4f1ea; /* Pete Frame "aged paper" */
-  --color-text-primary: #000000; /* 100% black */
-  --color-text-secondary: #333333;
+  /* Pete Frame: black ink, white paper, architect's capitals */
+  --color-background: #ececec;
+  --color-paper: #ffffff;
+  --color-text-primary: #000000;
+  --color-text-secondary: #444444;
   --color-accent: #000000;
   --color-accent-hover: #333333;
   --color-border: #000000;
-  --font-serif: 'Impact', sans-serif;
-  --font-sans: 'Arial Narrow', 'Arial', sans-serif;
+  --font-sans: 'Architects Daughter', 'Comic Sans MS', cursive;
 }
 
 body {
@@ -21,5 +20,24 @@ body {
   background-color: var(--color-background);
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
+
+/* Frame's tall, narrow capitals for headings */
+.font-serif, .font-marker {
+  font-family: 'Amatic SC', var(--font-sans);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 1.6em;
+  line-height: 1.1;
+}
+
+@layer components {
+  .ink-box {
+    background: var(--color-paper);
+    border: 2px solid var(--color-border);
+    box-shadow: 3px 3px 0 var(--color-border);
+  }
+}
+
+input[type='range'] { accent-color: var(--color-accent); }
