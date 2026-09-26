@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import '@fontsource/amatic-sc/700.css'
 import '@fontsource/architects-daughter'
 import App from './App.jsx'
 import './index.css'

@@ -1,5 +1,5 @@
 from app.musicbrainz import is_group, normalize_artist
-from app.refiner import abbreviate_roles, parse_date
+from app.refiner import parse_date, role_words
 
 BAND_JSON = {
     "id": "jd", "name": "Joy Division", "type": "Group", "disambiguation": "",
@@ -37,11 +37,11 @@ def test_normalize_person_direction():
     assert not is_group(rec)
 
 
-def test_role_abbreviations_follow_frame():
-    assert abbreviate_roles(["original", "lead vocals", "harmonica"]) == ["vcls", "hrmnca"]
-    assert abbreviate_roles(["bass guitar", "background vocals"]) == ["bs"]
-    assert abbreviate_roles(["drums (drum set)"]) == ["drms"]
-    assert abbreviate_roles(["theremin"]) == ["theremin"]
+def test_roles_are_plain_words():
+    assert role_words(["original", "lead vocals", "harmonica"]) == ["vocals", "harmonica"]
+    assert role_words(["bass guitar", "background vocals"]) == ["bass"]
+    assert role_words(["drums (drum set)"]) == ["drums"]
+    assert role_words(["theremin"]) == ["theremin"]
 
 
 def test_parse_date_precision():

@@ -22,11 +22,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Frame's tall, narrow capitals for headings */
 .font-serif, .font-marker {
-  font-family: var(--font-sans);
+  font-family: 'Amatic SC', var(--font-sans);
+  font-weight: 700;
   text-transform: uppercase;
-  -webkit-text-stroke: 0.6px currentColor;
   letter-spacing: 0.04em;
+  font-size: 1.6em;
+  line-height: 1.1;
 }
 
 @layer components {

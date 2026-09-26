@@ -37,34 +37,35 @@ def format_time(t):
     return str(year) if month == 0 else f"{MONTHS[month]} {year % 100:02d}"
 
 
-# Pete Frame's abbreviations, most specific first.
-ROLE_ABBREVIATIONS = [
-    ("background vocals", "b.vcls"), ("lead vocals", "vcls"), ("vocals", "vcls"), ("vocal", "vcls"),
-    ("rhythm guitar", "gtr"), ("lead guitar", "gtr"), ("slide guitar", "gtr"), ("steel guitar", "steel gtr"),
-    ("bass guitar", "bs"), ("double bass", "bs"), ("bass", "bs"),
-    ("guitar", "gtr"),
-    ("drums", "drms"), ("drum", "drms"), ("percussion", "perc"),
-    ("keyboard", "kybds"), ("synthesizer", "synth"), ("piano", "pno"), ("organ", "organ"),
-    ("mellotron", "kybds"), ("harmonica", "hrmnca"), ("saxophone", "sax"), ("violin", "vln"),
-    ("fiddle", "fiddle"), ("flute", "flute"), ("trumpet", "tpt"), ("trombone", "tbn"),
-    ("cello", "cello"), ("banjo", "banjo"), ("mandolin", "mndln"), ("turntables", "decks"),
-    ("programming", "prog"), ("dj", "decks"), ("rap", "vcls"), ("mc", "vcls"),
+# Instruments as Pete Frame writes them under each name: plain lowercase words.
+# Most specific MusicBrainz attribute first.
+ROLE_WORDS = [
+    ("background vocals", "backing vocals"), ("lead vocals", "vocals"), ("vocals", "vocals"), ("vocal", "vocals"),
+    ("rhythm guitar", "guitar"), ("lead guitar", "guitar"), ("slide guitar", "guitar"), ("steel guitar", "steel guitar"),
+    ("bass guitar", "bass"), ("double bass", "bass"), ("bass", "bass"),
+    ("guitar", "guitar"),
+    ("drums", "drums"), ("drum", "drums"), ("percussion", "percussion"),
+    ("keyboard", "keyboards"), ("synthesizer", "synths"), ("piano", "piano"), ("organ", "organ"),
+    ("mellotron", "keyboards"), ("harmonica", "harmonica"), ("saxophone", "sax"), ("violin", "violin"),
+    ("fiddle", "fiddle"), ("flute", "flute"), ("trumpet", "trumpet"), ("trombone", "trombone"),
+    ("cello", "cello"), ("banjo", "banjo"), ("mandolin", "mandolin"), ("turntables", "decks"),
+    ("programming", "programming"), ("dj", "decks"), ("rap", "vocals"), ("mc", "vocals"),
 ]
 NON_ROLE_ATTRIBUTES = {"original", "founder", "additional", "minor", "guest", "support", "touring", "eponymous"}
-ROLE_ORDER = ["vcls", "gtr", "steel gtr", "bs", "kybds", "synth", "pno", "organ", "drms", "perc"]
+ROLE_ORDER = ["vocals", "guitar", "steel guitar", "bass", "keyboards", "synths", "piano", "organ", "drums", "percussion"]
 
 
-def abbreviate_roles(attributes):
+def role_words(attributes):
     out = []
     for attr in attributes or []:
         a = (attr or "").lower().strip()
         if not a or a in NON_ROLE_ATTRIBUTES:
             continue
-        abbr = next((short for key, short in ROLE_ABBREVIATIONS if key in a), a)
-        if abbr not in out:
-            out.append(abbr)
-    if len(out) > 1 and "b.vcls" in out:
-        out.remove("b.vcls")
+        word = next((w for key, w in ROLE_WORDS if key in a), a)
+        if word not in out:
+            out.append(word)
+    if len(out) > 1 and "backing vocals" in out:
+        out.remove("backing vocals")
     return out[:3]
 
 
@@ -210,7 +211,7 @@ class Refiner:
                     labels[t] = lab
             stints.append(Stint(
                 person_id=m["person_id"], name=m["person_name"] or "?", start=s, end=e,
-                roles=abbreviate_roles(m.get("attributes")), start_label=sl, end_label=el,
+                roles=role_words(m.get("attributes")), start_label=sl, end_label=el,
             ))
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,

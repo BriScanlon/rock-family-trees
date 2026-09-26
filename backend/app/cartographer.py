@@ -1,47 +1,56 @@
-"""Lays out a FamilyTree in the manner of Pete Frame's Rock Family Trees.
+"""Lays out a FamilyTree the way Pete Frame drew his Rock Family Trees.
 
-* Time runs down the page. Every line-up is a numbered box; boxes that start
-  at the same time share a row, and rows are spaced roughly in proportion to
-  elapsed time, pushed apart only as much as needed to avoid overlaps.
-* Each band gets a vertical lane. Lanes are reused once a band has finished,
-  and bands that share members are placed next to each other.
-* Consecutive line-ups of a band are joined by a thick "trunk" line.
-* When a musician moves to another band (or rejoins later), a thin line runs
-  from their name in the old box, down the gutters between lanes, into their
-  name in the new box.
-* Short handwritten-style notes under each box say who left, why, and when.
+* Time runs down the page. Line-ups that start at the same time share a row;
+  rows are spaced roughly in proportion to elapsed time and pushed apart only
+  as much as needed to avoid collisions.
+* Each band gets a vertical lane; lanes are reused once a band has finished,
+  and bands that share members sit next to each other.
+* A line-up is not boxed. It is the band name in big lettering with its dates
+  stacked alongside, a ruled bar underneath, and the members hanging from the
+  bar side by side: first name over surname, instrument beneath.
+* Every musician keeps a column within their band (a replacement takes the
+  column of the person they replaced), and a line runs straight down from
+  their name to their place in the next line-up.
+* When a musician moves to another band the line leaves their name, runs
+  through the gutters between lanes and drops into the bar of the new band.
+* Notes are written as a paragraph of handwriting beside each line-up.
 """
 import math
 from collections import defaultdict
 
-from app.fonts import HAND, text_width, wrap
+from app.fonts import HAND, LETTERING, text_width, wrap
 
-LANE_W = 250
-GUTTER = 70
-AXIS_W = 80           # year scale on each side
-MARGIN = 40
+GUTTER = 64
+AXIS_W = 80           # year scale on each side (optional)
+MARGIN = 50
 TITLE_H = 250
 FOOTER_H = 190
 
-PAD = 10
-NAME_SIZE = 22        # band name
-DATE_SIZE = 13
-MEMBER_SIZE = 13
-ROLE_SIZE = 10
-ROW_H = 19
-NOTE_SIZE = 11
-NOTE_LINE = 14
-MAX_MEMBERS = 14
+NAME_SIZE = 44        # band name
+NAME_WEIGHT = 700
+DATE_SIZE = 12        # dates stacked beside the band name
+HEADER_H = 50         # top of block to the ruled bar
+COL_W = 84            # one musician's column
+TICK = 9
+MEMBER_SIZE = 22      # musician names
+MEMBER_LINE = 19
+ROLE_SIZE = 12
+ROLE_LINE = 13
+NOTE_GAP = 18
+NOTE_W = 190
+NOTE_SIZE = 13
+NOTE_LINE = 16
+MAX_MEMBERS = 12
 MAX_NOTES = 6
-TRUNK_DX = 16         # trunk runs this far in from the box's left edge
 
 PX_PER_YEAR = 75
 MIN_STEP = 14
 MAX_STEP = 110
-V_GAP = 34            # minimum gap between boxes in one lane
+V_GAP = 44            # minimum gap between line-ups in one lane
 LANE_REUSE_YEARS = 0.1
 TRACK_SPACING = 7
-SIDESTEP_SLACK = 60   # px a line-up may slip below its date before zig-zagging
+MAX_STRETCH = 1.8     # most the rows may be spread to fill the sheet
+STAGGER = 6           # separation of parallel horizontal runs leaving/entering a line-up
 
 PAPER_MM = {"A0": (841, 1189), "A1": (594, 841), "A2": (420, 594), "A3": (297, 420), "A4": (210, 297)}
 
@@ -62,21 +71,23 @@ class Cartographer:
         if not bands:
             raise ValueError("Nothing to draw: no band line-ups with usable dates were found")
         self.appearances = self._appearances(bands)
-        self._make_boxes(bands)
+        self._make_blocks(bands)
         lanes = self._assign_lanes(bands)
         self.lane_count = max(lanes.values()) + 1
-        self.lane_spans = defaultdict(list)
-        for band in bands:
-            self.lane_spans[lanes[band.id]].append((band.id, band.start, band.end))
         for box in self.boxes.values():
-            box["lane"] = box["home_lane"] = lanes[box["band_id"]]
+            box["lane"] = lanes[box["band_id"]]
         anchors = self._assign_rows()
-        for box in self.boxes.values():
-            box["x"] = self._lane_x(box["lane"])
-        trunks = self._trunks(bands)
-        edges = self._route_edges()
 
+        self.lane_w = [0] * self.lane_count
+        for box in self.boxes.values():
+            self.lane_w[box["lane"]] = max(self.lane_w[box["lane"]], box["w"])
         content_w = self._lane_x(self.lane_count) + self.axis_w + MARGIN
+        anchors = self._fill_page(content_w, anchors)
+        for box in self.boxes.values():
+            self._place(box, self._lane_x(box["lane"]))
+        trunks = self._continuity(bands)
+        edges = self._route_edges(bands)
+
         content_h = max(b["y"] + b["footprint"] for b in self.boxes.values()) + 60
         width, height, offset_x = self._paper_size(content_w, content_h + FOOTER_H)
         self._shift(offset_x, trunks, edges)
@@ -94,11 +105,12 @@ class Cartographer:
             "trunks": trunks, "edges": edges,
             "footer_y": height - FOOTER_H + 30,
             "stats": {"bands": len(bands), "lineups": len(self.boxes),
-                      "people": len({p for b in bands for s in b.stints for p in [s.person_id]})},
+                      "people": len({s.person_id for b in bands for s in b.stints})},
         }
 
     def _lane_x(self, lane):
-        return MARGIN + self.axis_w + GUTTER + lane * (LANE_W + GUTTER)
+        """Left edge of lane `lane` (lanes vary in width)."""
+        return MARGIN + self.axis_w + GUTTER + sum(self.lane_w[:lane]) + lane * GUTTER
 
     def _gutter_x(self, gutter):
         """Centre of gutter i (gutter i sits left of lane i)."""
@@ -116,52 +128,100 @@ class Cartographer:
             apps.sort(key=lambda a: (a[1].start, a[0].start, a[0].name))
         return out
 
-    def _make_boxes(self, bands):
+    @staticmethod
+    def _columns(band):
+        """Column for every member of every line-up. People keep their column;
+        a newcomer takes the column vacated by someone with the same
+        instrument if there is one, else any vacated column, else a new one."""
+        out, prev, prev_roles = [], {}, {}
+        for lu in band.lineups[:]:
+            members = lu.members[:MAX_MEMBERS]
+            cur = {m.person_id: prev[m.person_id] for m in members if m.person_id in prev}
+            free = sorted(set(prev.values()) - set(cur.values()))
+            used = set(prev.values()) | set(cur.values())
+            for m in members:
+                if m.person_id in cur:
+                    continue
+                col = next((c for c in free if set(prev_roles.get(c, ())) & set(m.roles)), None)
+                if col is None and free:
+                    col = free[0]
+                if col is None:
+                    col = max(used | set(cur.values()), default=-1) + 1
+                if col in free:
+                    free.remove(col)
+                cur[m.person_id] = col
+                used.add(col)
+            out.append(cur)
+            prev = cur
+            prev_roles = {c: next(m.roles for m in members if m.person_id == p) for p, c in cur.items()}
+        return out
+
+    def _make_blocks(self, bands):
+        people = self.tree.people
         for band in bands:
-            name_lines, name_size = self._fit_band_name(band.name.upper())
+            name = band.name.upper()
+            name_size = NAME_SIZE
+            while name_size > 26 and text_width(name, LETTERING, name_size, NAME_WEIGHT) > 5 * COL_W:
+                name_size -= 2
+            name_w = text_width(name, LETTERING, name_size, NAME_WEIGHT)
+            columns = self._columns(band)
+            ncols = max(max(c.values(), default=0) for c in columns) + 1
+            content_w = max(ncols * COL_W, name_w + 12 + 60)
+            notes_by_lineup = [self._notes(band, lu, band.lineups[i + 1] if i + 1 < len(band.lineups) else None)
+                               for i, lu in enumerate(band.lineups)]
+            has_notes = any(notes_by_lineup)
+            w = content_w + (NOTE_GAP + NOTE_W if has_notes else 0)
+
             for i, lu in enumerate(band.lineups):
-                nxt = band.lineups[i + 1] if i + 1 < len(band.lineups) else None
-                members = lu.members[:MAX_MEMBERS]
+                cols = columns[i]
+                members = []
+                bottom = HEADER_H
+                for m in lu.members[:MAX_MEMBERS]:
+                    lines = _split_name(m.name.upper())
+                    roles = list(m.roles[:2])  # one instrument per line, as Frame writes them
+                    person = people.get(m.person_id)
+                    if person and person.died is not None and lu.start <= person.died <= lu.end + 0.3:
+                        roles.append(f"(died {person.died_label})")
+                    y_name = HEADER_H + TICK + MEMBER_SIZE * 0.8
+                    y_bottom = y_name + (len(lines) - 1) * MEMBER_LINE + len(roles) * ROLE_LINE + 5
+                    bottom = max(bottom, y_bottom)
+                    members.append({"person_id": m.person_id, "col": cols[m.person_id],
+                                    "lines": lines, "roles": roles, "dy_name": y_name, "dy_bottom": y_bottom})
+                members.sort(key=lambda m: m["col"])
                 overflow = len(lu.members) - len(members)
-                header_h = PAD + len(name_lines) * (name_size + 3) + DATE_SIZE + 8
-                h = header_h + (len(members) + (1 if overflow else 0)) * ROW_H + PAD
-                notes = []
-                for note in self._notes(band, lu, nxt)[:MAX_NOTES]:
-                    notes += wrap(note.upper(), HAND, NOTE_SIZE, LANE_W - TRUNK_DX - 16)
+                notes_text = " ".join(notes_by_lineup[i][:MAX_NOTES])
+                notes = wrap(notes_text, HAND, NOTE_SIZE, NOTE_W) if notes_text else []
+                h = bottom + (ROLE_LINE if overflow else 0)
                 box_id = f"{band.id}#{lu.number}"
-                rows = {}
-                for j, m in enumerate(members):
-                    rows[m.person_id] = header_h + j * ROW_H + ROW_H / 2
                 self.boxes[box_id] = {
-                    "id": box_id, "band_id": band.id, "band_name": band.name,
-                    "name_lines": name_lines, "name_size": name_size,
-                    "number": lu.number, "start": lu.start, "end": lu.end,
-                    "date_label": f"({lu.start_label} – {lu.end_label})".upper(),
-                    "after_gap": lu.after_gap, "ongoing": lu.ongoing, "level": band.level,
-                    "header_h": header_h, "w": LANE_W, "h": h,
-                    "members": [{"person_id": m.person_id, "name": m.name.upper(), "roles": ", ".join(m.roles).upper(),
-                                 "dy": rows[m.person_id]} for m in members],
-                    "overflow": overflow,
-                    "notes": notes[:MAX_NOTES + 3],
-                    "footprint": h + (8 + len(notes[:MAX_NOTES + 3]) * NOTE_LINE if notes else 0),
+                    "id": box_id, "band_id": band.id, "band_name": band.name, "number": lu.number,
+                    "name": name, "name_size": name_size, "name_w": name_w,
+                    "dates": [lu.start_label.upper(), lu.end_label.upper()],
+                    "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
+                    "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
+                    "level": band.level, "w": w, "content_w": content_w, "h": h,
+                    "members": members, "overflow": overflow, "notes": notes,
+                    "footprint": max(h, HEADER_H - 4 + len(notes) * NOTE_LINE + 4),
                 }
                 self.box_order.append(box_id)
 
-    def _fit_band_name(self, name):
-        avail = LANE_W - 2 * PAD - 18
-        if text_width(name, HAND, NAME_SIZE) <= avail:
-            return [name], NAME_SIZE
-        for size in (19, 17):
-            lines = wrap(name, HAND, size, avail)
-            if len(lines) <= 2 and all(text_width(l, HAND, size) <= avail for l in lines):
-                return lines, size
-        return wrap(name, HAND, 15, avail)[:3], 15
+    def _place(self, box, x):
+        """Fix a block's absolute position and its members' coordinates."""
+        box["x"] = x
+        box["bar_y"] = box["y"] + HEADER_H
+        box["notes_x"] = x + box["content_w"] + NOTE_GAP
+        for m in box["members"]:
+            m["cx"] = x + m["col"] * COL_W + COL_W / 2
+            m["y_name"] = box["y"] + m["dy_name"]
+            m["bottom"] = box["y"] + m["dy_bottom"]
+        cxs = [m["cx"] for m in box["members"]] or [x + COL_W / 2]
+        box["bar"] = (min(x, min(cxs) - 12), max(cxs) + 12)
 
     def _notes(self, band, lu, nxt):
-        """Frame-style annotations about the end of this line-up."""
+        """Frame-style annotations about how this line-up ended, as sentences."""
         notes = []
         people = self.tree.people
-        leaving = [m for m in lu.members]
+        leaving = list(lu.members)
         if nxt is not None and not nxt.after_gap:
             staying = {m.person_id for m in nxt.members}
             leaving = [m for m in lu.members if m.person_id not in staying]
@@ -169,25 +229,22 @@ class Cartographer:
         for m in leaving:
             person = people.get(m.person_id)
             if person and person.died is not None and lu.start <= person.died <= lu.end + 0.3:
-                notes.append(f"{m.name} died {person.died_label}")
+                notes.append(f"{m.name} died in {_long_date(person.died_label)}.")
                 continue
             dest = self._next_band(m.person_id, band, lu)
             if dest is not None:
                 d_band, d_lu = dest
                 verb = "form" if d_lu.number == 1 and abs(d_band.start - lu.end) <= 1.0 else "join"
-                if band_over:
-                    notes.append(f"{m.name} → {d_band.name}")
-                else:
-                    notes.append(f"{m.name} left to {verb} {d_band.name}")
+                notes.append(f"{m.name} {'went on' if band_over else 'left'} to {verb} {d_band.name}.")
             elif not band_over:
-                notes.append(f"{m.name} left {lu.end_label}")
+                notes.append(f"{m.name} left in {_long_date(lu.end_label)}.")
         if band_over:
             if nxt is not None:
-                notes.insert(0, f"Split {lu.end_label}; re-formed {nxt.start_label}")
+                notes.insert(0, f"Split in {_long_date(lu.end_label)}; re-formed {_long_date(nxt.start_label)}.")
             elif band.ended:
-                notes.insert(0, f"Split {lu.end_label}")
+                notes.insert(0, f"Split in {_long_date(lu.end_label)}.")
             else:
-                notes.insert(0, "Still going")
+                notes.insert(0, "Still going.")
         return notes
 
     def _next_band(self, person_id, band, lu):
@@ -260,21 +317,13 @@ class Cartographer:
             lane_of[bid] = lane
         return lane_of
 
-    def _lane_free(self, lane, band_id, start, end):
-        if not 0 <= lane < self.lane_count:
-            return False
-        return all(b == band_id or e + LANE_REUSE_YEARS <= start or end + LANE_REUSE_YEARS <= s
-                   for b, s, e in self.lane_spans[lane])
-
     def _assign_rows(self):
-        """Give every row a y. A long-running band whose line-ups would pile up
-        far below their dates zig-zags into a free neighbouring lane, as Frame
-        did, instead of stretching the whole poster."""
+        """Give every row a y: roughly proportional to time, but never letting
+        two line-ups in the same lane collide."""
         groups = defaultdict(list)
         for box in self.boxes.values():
             groups[round(box["start"] * 12)].append(box)
         lane_bottom = defaultdict(lambda: -math.inf)
-        side_lane = {}
         y_prev, t_prev = None, None
         anchors = []
         for key in sorted(groups):
@@ -285,19 +334,6 @@ class Cartographer:
             else:
                 step = min(max((t - t_prev) * PX_PER_YEAR, MIN_STEP), MAX_STEP)
                 y = y_prev + step
-            for b in group:
-                home = b["home_lane"]
-                if lane_bottom[home] + V_GAP <= y + SIDESTEP_SLACK:
-                    continue
-                side = side_lane.get(b["band_id"])
-                if side is None:
-                    side = next((c for c in (home + 1, home - 1)
-                                 if self._lane_free(c, b["band_id"], b["start"], b["end"])), None)
-                elif not self._lane_free(side, b["band_id"], b["start"], b["end"]):
-                    side = None
-                if side is not None and lane_bottom[side] < lane_bottom[home]:
-                    side_lane[b["band_id"]] = side
-                    b["lane"] = side
             y = max([y] + [lane_bottom[b["lane"]] + V_GAP for b in group])
             for b in group:
                 b["y"] = y
@@ -307,70 +343,84 @@ class Cartographer:
         return anchors
 
     # ------------------------------------------------------------------
-    def _trunks(self, bands):
-        trunks = []
+    def _member(self, box, person_id):
+        return next((m for m in box["members"] if m["person_id"] == person_id), None)
+
+    def _continuity(self, bands):
+        """Each musician's line straight down to their place in the band's next
+        line-up (same lane). Lines crossing lanes are routed as edges."""
+        lines = []
         for band in bands:
             boxes = [self.boxes[f"{band.id}#{lu.number}"] for lu in band.lineups]
             for a, b in zip(boxes, boxes[1:]):
-                trunks.append({"points": self._trunk_points(a, b), "dashed": b["after_gap"]})
+                if a["lane"] != b["lane"]:
+                    continue
+                for ma in a["members"]:
+                    mb = self._member(b, ma["person_id"])
+                    if mb is None:
+                        continue
+                    pts = [(ma["cx"], ma["bottom"]), (ma["cx"], b["y"] - 6)]
+                    if mb["cx"] != ma["cx"]:
+                        pts.append((mb["cx"], b["y"] - 6))
+                    pts.append((mb["cx"], b["bar_y"]))
+                    lines.append({"person_id": ma["person_id"], "points": pts, "dashed": b["after_gap"]})
             last = boxes[-1]
             if last["ongoing"]:
-                x = last["x"] + TRUNK_DX
-                y1 = last["y"] + last["footprint"] + 30
-                trunks.append({"points": [(x, last["y"] + last["h"]), (x, y1)], "dashed": False, "arrow": True})
-        return trunks
+                for m in last["members"]:
+                    lines.append({"person_id": m["person_id"], "dashed": False, "arrow": True,
+                                  "points": [(m["cx"], m["bottom"]), (m["cx"], m["bottom"] + 26)]})
+        return lines
 
-    def _trunk_points(self, a, b):
-        if a["lane"] == b["lane"]:
-            x = a["x"] + TRUNK_DX
-            return [(x, a["y"] + a["h"]), (x, b["y"])]
-        # zig-zag: leave from the side of the box, through the gutter, into the next box
-        rightward = b["lane"] > a["lane"]
-        gx = self._gutter_x(max(a["lane"], b["lane"]))
-        yb = b["y"] + b["header_h"] / 2
-        ya = min(a["y"] + a["h"] - 14, yb)
-        xa = a["x"] + (LANE_W if rightward else 0)
-        xb = b["x"] + (0 if rightward else LANE_W)
-        return [(xa, ya), (gx, ya), (gx, yb), (xb, yb)]
-
-    def _route_edges(self):
+    def _route_edges(self, bands):
         lane_boxes = defaultdict(list)
         for b in self.boxes.values():
-            lane_boxes[b["lane"]].append((b["y"] - 6, b["y"] + b["footprint"] + 4))
+            lane_boxes[b["lane"]].append((b["y"] - 12, b["y"] + b["footprint"] + 6))
 
-        edges = []
+        pairs = []
         for person_id, apps in self.appearances.items():
             for (ba, la), (bb, lb) in zip(apps, apps[1:]):
-                if ba.id == bb.id and lb.number == la.number + 1:
-                    continue  # carried by the trunk
                 A = self.boxes[f"{ba.id}#{la.number}"]
                 B = self.boxes[f"{bb.id}#{lb.number}"]
                 if A is B:
                     continue
-                edges.append(self._route(person_id, A, B, lane_boxes))
+                if ba.id == bb.id and lb.number == la.number + 1 and A["lane"] == B["lane"]:
+                    continue  # drawn as a straight continuity line
+                if self._member(A, person_id) is None or self._member(B, person_id) is None:
+                    continue  # beyond MAX_MEMBERS
+                pairs.append((person_id, A, B, ba.id == bb.id))
 
+        out_count, in_count = defaultdict(int), defaultdict(int)
+        edges = []
+        for person_id, A, B, same_band in sorted(pairs, key=lambda p: (p[1]["y"], self._member(p[1], p[0])["cx"])):
+            k_out = out_count[A["id"]] % 4
+            k_in = in_count[B["id"]] % 4
+            out_count[A["id"]] += 1
+            in_count[B["id"]] += 1
+            edges.append(self._route(person_id, A, B, k_out, k_in, lane_boxes, same_band))
         self._assign_tracks(edges)
         return edges
 
-    def _route(self, person_id, A, B, lane_boxes):
-        ma = next((m for m in A["members"] if m["person_id"] == person_id), None)
-        mb = next((m for m in B["members"] if m["person_id"] == person_id), None)
-        sy = A["y"] + (ma["dy"] if ma else A["h"] - PAD)
-        ty = B["y"] + (mb["dy"] if mb else B["header_h"])
+    def _route(self, person_id, A, B, k_out, k_in, lane_boxes, same_band):
+        ma, mb = self._member(A, person_id), self._member(B, person_id)
         la, lb = A["lane"], B["lane"]
         if lb > la:
-            g1, g2, sx, tx = la + 1, lb, A["x"] + LANE_W, B["x"]
+            g1, g2 = la + 1, lb
         elif lb < la:
-            g1, g2, sx, tx = la, lb + 1, A["x"], B["x"] + LANE_W
+            g1, g2 = la, lb + 1
         else:
             g1 = g2 = la + 1
-            sx, tx = A["x"] + LANE_W, B["x"] + LANE_W
-
-        edge = {"person_id": person_id, "from": A["id"], "to": B["id"],
-                "sx": sx, "sy": sy, "tx": tx, "ty": ty, "g1": g1, "g2": g2}
+        edge = {
+            "person_id": person_id, "from": A["id"], "to": B["id"], "same_band": same_band,
+            "dashed": same_band and B["after_gap"],
+            "sx": ma["cx"], "sy": ma["bottom"], "tx": mb["cx"], "ty": B["bar_y"],
+            # leave below the whole line-up (clear of the notes), arrive just above the band name
+            "ya": A["y"] + A["footprint"] + 8 + STAGGER * k_out,
+            "yb": B["y"] - 8 - STAGGER * k_in,
+            "g1": g1, "g2": g2,
+        }
         if g1 != g2:
             crossing = range(min(g1, g2), max(g1, g2))
-            edge["cy"] = self._crossing_y(crossing, lane_boxes, sy, ty, B["y"] - 14)
+            edge["cy"] = self._crossing_y(crossing, lane_boxes, edge["ya"], edge["yb"], edge["yb"] - 10)
         return edge
 
     def _crossing_y(self, lanes, lane_boxes, sy, ty, preferred):
@@ -398,15 +448,15 @@ class Cartographer:
         return best if best is not None else preferred
 
     def _assign_tracks(self, edges):
-        """Spread parallel lines across the gutter so they don't sit on top of each other."""
+        """Spread parallel lines across a gutter so they don't sit on top of each other."""
         per_gutter = defaultdict(list)
         for e in edges:
             if e["g1"] == e["g2"]:
-                per_gutter[e["g1"]].append((min(e["sy"], e["ty"]), max(e["sy"], e["ty"]), e, "x1"))
+                per_gutter[e["g1"]].append((min(e["ya"], e["yb"]), max(e["ya"], e["yb"]), e, "x1"))
             else:
-                per_gutter[e["g1"]].append((min(e["sy"], e["cy"]), max(e["sy"], e["cy"]), e, "x1"))
-                per_gutter[e["g2"]].append((min(e["cy"], e["ty"]), max(e["cy"], e["ty"]), e, "x2"))
-        max_tracks = max(1, int((GUTTER - 14) // TRACK_SPACING))
+                per_gutter[e["g1"]].append((min(e["ya"], e["cy"]), max(e["ya"], e["cy"]), e, "x1"))
+                per_gutter[e["g2"]].append((min(e["cy"], e["yb"]), max(e["cy"], e["yb"]), e, "x2"))
+        max_tracks = max(1, int((GUTTER - 12) // TRACK_SPACING))
         for gutter, segs in per_gutter.items():
             segs.sort(key=lambda s: (s[0], s[1]))
             track_end = []
@@ -422,7 +472,6 @@ class Cartographer:
         for e in edges:
             if e["g1"] == e["g2"]:
                 e["x2"] = e["x1"]
-        # Nudge horizontal crossings that would run on top of one another.
         crossings = sorted((e for e in edges if "cy" in e), key=lambda e: e["cy"])
         placed = []
         for e in crossings:
@@ -432,35 +481,52 @@ class Cartographer:
                 e["cy"] -= 6
             placed.append(e)
         for e in edges:
-            pts = [(e["sx"], e["sy"]), (e["x1"], e["sy"])]
+            pts = [(e["sx"], e["sy"]), (e["sx"], e["ya"]), (e["x1"], e["ya"])]
             if "cy" in e:
                 pts += [(e["x1"], e["cy"]), (e["x2"], e["cy"])]
-            pts += [(e["x2"], e["ty"]), (e["tx"], e["ty"])]
+            pts += [(e["x2"], e["yb"]), (e["tx"], e["yb"]), (e["tx"], e["ty"])]
             e["points"] = pts
-
-    # ------------------------------------------------------------------
-    def _paper_size(self, w, h):
-        if not self.paper:
-            return w, h, 0
-        short, long_ = PAPER_MM[self.paper]
-        ratio = long_ / short
-        if h >= w:   # portrait
-            width = max(w, h / ratio)
-            height = max(h, width * ratio)
-        else:        # landscape
-            height = max(h, w / ratio)
-            width = max(w, height * ratio)
-        return width, height, (width - w) / 2
 
     def _shift(self, dx, trunks, edges):
         if not dx:
             return
         for b in self.boxes.values():
             b["x"] += dx
-        for t in trunks:
-            t["points"] = [(x + dx, y) for x, y in t["points"]]
-        for e in edges:
-            e["points"] = [(x + dx, y) for x, y in e["points"]]
+            b["notes_x"] += dx
+            b["bar"] = (b["bar"][0] + dx, b["bar"][1] + dx)
+            for m in b["members"]:
+                m["cx"] += dx
+        for line in list(trunks) + list(edges):
+            line["points"] = [(x + dx, y) for x, y in line["points"]]
+
+    # ------------------------------------------------------------------
+    def _fill_page(self, content_w, anchors):
+        """If the sheet will be taller than the drawing, spread the rows out to
+        use it: gaps grow, line-ups keep their size, so nothing can collide."""
+        content_h = max(b["y"] + b["footprint"] for b in self.boxes.values()) + 60
+        width, height, _ = self._paper_size(content_w, content_h + FOOTER_H)
+        spare = height - (content_h + FOOTER_H)
+        if spare <= 0:
+            return anchors
+        span = max(b["y"] for b in self.boxes.values()) - TITLE_H
+        if span <= 0:
+            return anchors
+        f = min(MAX_STRETCH, 1 + spare / span)
+        for b in self.boxes.values():
+            b["y"] = TITLE_H + (b["y"] - TITLE_H) * f
+        return [(t, TITLE_H + (y - TITLE_H) * f) for t, y in anchors]
+
+    def _paper_size(self, w, h):
+        """Grow the canvas to the paper's proportions, in whichever orientation
+        wastes less space; the drawing is centred horizontally."""
+        if not self.paper:
+            return w, h, 0
+        short, long_ = PAPER_MM[self.paper]
+        ratio = long_ / short
+        portrait = (max(w, h / ratio), max(h, max(w, h / ratio) * ratio))
+        landscape = (max(w, max(h, w / ratio) * ratio), max(h, w / ratio))
+        width, height = min(portrait, landscape, key=lambda s: s[0] * s[1])
+        return width, height, (width - w) / 2
 
     def _year_marks(self, anchors):
         if not anchors:
@@ -491,3 +557,25 @@ def _interpolate(anchors, t):
         if t1 <= t <= t2:
             return y1 if t2 == t1 else y1 + (y2 - y1) * (t - t1) / (t2 - t1)
     return None
+
+
+def _split_name(name):
+    """'JOHN PAUL JONES' -> ['JOHN PAUL', 'JONES']: first name(s) over surname."""
+    parts = name.split()
+    if len(parts) < 2:
+        return [name]
+    return [" ".join(parts[:-1]), parts[-1]]
+
+
+_MONTHS = {"Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April", "May": "May", "Jun": "June",
+           "Jul": "July", "Aug": "August", "Sep": "September", "Oct": "October", "Nov": "November",
+           "Dec": "December"}
+
+
+def _long_date(label):
+    """'Mar 66' -> 'March 1966'; '1966' stays."""
+    parts = (label or "").split()
+    if len(parts) == 2 and parts[0] in _MONTHS and parts[1].isdigit():
+        yy = int(parts[1])
+        return f"{_MONTHS[parts[0]]} {1900 + yy if yy >= 30 else 2000 + yy}"
+    return label

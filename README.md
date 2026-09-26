@@ -1,6 +1,6 @@
 # Rock Family Tree Generator (RFTG)
 
-Generate printable "Rock Family Tree" posters in the style of Pete Frame's hand-drawn classics: every line-up of every band as a numbered box, time running down the page, thick lines joining a band's line-ups, and thin lines following each musician as they leave to form or join the next band. Handwritten-style notes say who left, who died and when bands split.
+Generate printable "Rock Family Tree" posters in the style of Pete Frame's hand-drawn classics. Time runs down the page; each line-up is the band name in tall hand-lettered capitals with its dates stacked alongside, a ruled bar, and the members hanging from it side by side — first name over surname, instrument beneath. Every musician has a line that runs down to their place in the next line-up, or off to the next band they join, and paragraphs of handwritten notes say who left, who died and when bands split.
 
 | Whole poster (offline demo) | Detail |
 | --- | --- |
@@ -49,8 +49,8 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `app/store.py`, `app/graph_db.py` | Record cache: Neo4j when configured and reachable, otherwise JSON files |
 | `app/harvester.py` | Follows band → members → their other bands for *depth* generations, within a fetch budget |
 | `app/refiner.py` | Parses dates, splits each band's history into numbered line-ups, abbreviates instruments Frame-style (vcls, gtr, bs, drms, kybds…), picks the most connected bands |
-| `app/cartographer.py` | Layout: time-proportional rows, lanes that put related bands side by side and are reused when bands end, zig-zagging for long-running bands, line routing through the gutters, notes, year scale, paper sizing (A0–A4) |
-| `app/artist.py` | Renders the SVG in Frame's manner — black ink on white, architect's hand-lettered capitals, ruled lines, outlined title — with the font embedded so it looks the same everywhere and prints at any size |
+| `app/cartographer.py` | Layout: time-proportional rows, lanes that put related bands side by side and are reused when bands end, a column per musician (replacements take the vacated column), per-musician lines, routing through the gutters, notes, paper sizing (A0–A4) |
+| `app/artist.py` | Renders the SVG in Frame's manner — black ink on white, tall hand-lettered capitals, unboxed line-ups, ruled lines — with the fonts embedded so it looks the same everywhere and prints at any size |
 | `app/jobs.py`, `app/worker.py` | Job progress (shared JSON files) and the Celery task |
 
 ### Options (`POST /generate`)
@@ -79,6 +79,6 @@ pytest                                   # unit, layout and API tests (no networ
 python tests/live_smoke.py               # against a running stack with MusicBrainz access
 ```
 
-The bundled font (Architects Daughter) is open-licensed; see `backend/app/assets/fonts/LICENSE.txt`.
+The bundled fonts (Amatic SC, Architects Daughter) are open-licensed; see `backend/app/assets/fonts/LICENSE.txt`.
 
 This project is a homage: *Rock Family Trees* are the work of Pete Frame.

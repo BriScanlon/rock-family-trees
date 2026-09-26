@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/amatic-sc": "^5.3.0",
     "@fontsource/architects-daughter": "^5.3.0",
     "axios": "^1.6.2",
     "lucide-react": "^0.294.0",

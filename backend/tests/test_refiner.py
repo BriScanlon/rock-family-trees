@@ -19,7 +19,7 @@ def test_joy_division_lineups():
     assert "Terry Mason" in names(jd.lineups[0]) and "Stephen Morris" not in names(jd.lineups[0])
     assert "Stephen Morris" in names(jd.lineups[1])
     assert jd.lineups[1].end_label == "May 80"
-    assert jd.lineups[0].members[0].roles == ["vcls"]
+    assert jd.lineups[0].members[0].roles == ["vocals"]
 
 
 def test_rejoining_member_and_ongoing_band():

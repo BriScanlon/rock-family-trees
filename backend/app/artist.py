@@ -1,16 +1,16 @@
 """Renders a Cartographer layout as a self-contained SVG poster in the style of
-Pete Frame's Rock Family Trees: black ink on white paper, neat architect's
-hand-lettered capitals, ruled lines, numbered line-up boxes and plenty of
-handwritten notes.
+Pete Frame's Rock Family Trees: black ink on white paper, tall hand-lettered
+capitals, unboxed line-ups with members hanging from a ruled bar, a line for
+every musician, and paragraphs of handwritten notes.
 
 Optional extras (off by default, as they aren't in the originals): an aged
 paper tint, a slight ink wobble, a year scale and coloured lines."""
 from datetime import date
 from xml.sax.saxutils import escape
 
-from app.cartographer import (DATE_SIZE, MEMBER_SIZE, NOTE_LINE, NOTE_SIZE, PAD, PAPER_MM, ROLE_SIZE, ROW_H,
-                              TRUNK_DX)
-from app.fonts import HAND, font_face_css, text_width
+from app.cartographer import (COL_W, DATE_SIZE, MEMBER_LINE, MEMBER_SIZE, NOTE_LINE, NOTE_SIZE, PAPER_MM,
+                              ROLE_LINE, ROLE_SIZE, TICK)
+from app.fonts import HAND, LETTERING, font_face_css, text_width
 
 WHITE = "#ffffff"
 AGED = "#f4ecd8"
@@ -39,12 +39,23 @@ class Artist:
     def _add(self, s):
         self.parts.append(s)
 
-    def _text(self, x, y, content, size, anchor="start", fit=None, bold=False, **kw):
+    def _text(self, x, y, content, size, anchor="start", fit=None, bold=False, family=HAND, weight=400,
+              halo=False, **kw):
         extra = {}
-        if fit and text_width(content, HAND, size) > fit:
+        if fit and text_width(content, family, size, weight) > fit:
             extra = {"textLength": f"{fit:.1f}", "lengthAdjust": "spacingAndGlyphs"}
         if bold:  # thicken the pen stroke rather than switching font
             extra.update(stroke=INK, stroke_width=f"{size / 28:.2f}", stroke_linejoin="round")
+        if halo:  # paper-coloured outline so lines appear to pass behind the lettering
+            extra.update(stroke=self.paper, stroke_width="7", stroke_linejoin="round", paint_order="stroke")
+        # inline style, as the stylesheet default would override presentation attributes
+        style = [kw.pop("style")] if "style" in kw else []
+        if family != HAND:
+            style.append(f"font-family:'{family}'")
+        if weight != 400:
+            style.append(f"font-weight:{weight}")
+        if style:
+            extra["style"] = ";".join(style)
         self._add(f'<text {_attrs(x=f"{x:.1f}", y=f"{y:.1f}", font_size=size, text_anchor=anchor, **extra, **kw)}>'
                   f"{escape(content)}</text>")
 
@@ -113,15 +124,12 @@ class Artist:
         """Big open (outlined) hand-drawn capitals with a solid drop shadow."""
         title = self.L["title"].upper()
         fit = W - 200
-        size = 96
-        while size > 44 and text_width(title, HAND, size) > fit:
+        size = 130
+        while size > 60 and text_width(title, LETTERING, size, 700) > fit:
             size -= 4
-        y = 50 + size
-        self._text(W / 2 + 5, y + 5, title, size, "middle", fit=fit, letter_spacing="3",
-                   stroke=INK, stroke_width="3", stroke_linejoin="round")
-        self._text(W / 2, y, title, size, "middle", fit=fit, letter_spacing="3", style=f"fill:{self.paper}",
-                   stroke=INK, stroke_width="2.5", stroke_linejoin="round", paint_order="stroke")
-        tw = min(text_width(title, HAND, size) + 3 * len(title), fit)
+        y = 40 + size * 0.85
+        self._text(W / 2, y, title, size, "middle", fit=fit, family=LETTERING, weight=700, letter_spacing="4")
+        tw = min(text_width(title, LETTERING, size, 700) + 4 * len(title), fit)
         ly = y + 22
         self._add(f'<line x1="{W / 2 - tw / 2:.0f}" y1="{ly}" x2="{W / 2 + tw / 2:.0f}" y2="{ly}" stroke="{INK}" stroke-width="3"/>')
         self._add(f'<line x1="{W / 2 - tw / 2:.0f}" y1="{ly + 7}" x2="{W / 2 + tw / 2:.0f}" y2="{ly + 7}" stroke="{INK}" stroke-width="1"/>')
@@ -143,67 +151,64 @@ class Artist:
         for e in self.L["edges"]:
             colour = self._colour(e["person_id"])
             d = _rounded_path(e["points"], radius)
+            dash = ' stroke-dasharray="8 5"' if e.get("dashed") else ""
             self._add(f'<path d="{d}" stroke="{self.paper}" stroke-width="4"/>')
-            self._add(f'<path d="{d}" stroke="{colour}" stroke-width="1.2" marker-end="url(#arrow)"/>')
+            self._add(f'<path d="{d}" stroke="{colour}" stroke-width="1.2"{dash}/>')
 
     def _trunks(self):
         for t in self.L["trunks"]:
-            dash = ' stroke-dasharray="10 6"' if t.get("dashed") else ""
+            dash = ' stroke-dasharray="8 5"' if t.get("dashed") else ""
             marker = ' marker-end="url(#arrow)"' if t.get("arrow") else ""
-            self._add(f'<path d="{_rounded_path(t["points"], 0)}" stroke="{INK}" stroke-width="3"{dash}{marker}/>')
+            colour = self._colour(t["person_id"])
+            self._add(f'<path d="{_rounded_path(t["points"], 0)}" stroke="{colour}" stroke-width="1.3"{dash}{marker}/>')
 
     def _boxes(self, wobble):
         for b in self.L["boxes"]:
-            x, y, w, h = b["x"], b["y"], b["w"], b["h"]
-            weight = 2.4 if b["level"] == 0 else 1.5
-            self._add(f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h:.1f}" fill="{self.paper}" '
+            x, y = b["x"], b["y"]
+            # band name, big, with its dates stacked alongside
+            self._text(x, y + b["name_size"] * 0.8, b["name"], b["name_size"], family=LETTERING, weight=700,
+                       halo=True)
+            dx = x + b["name_w"] + 10
+            for i, d in enumerate(b["dates"]):
+                self._text(dx, y + 16 + i * (DATE_SIZE + 3), d, DATE_SIZE, halo=True)
+            # the ruled bar the members hang from
+            bar_y = b["bar_y"]
+            weight = 2.2 if b["level"] == 0 else 1.5
+            self._add(f'<line x1="{b["bar"][0]:.1f}" y1="{bar_y:.1f}" x2="{b["bar"][1]:.1f}" y2="{bar_y:.1f}" '
                       f'stroke="{INK}" stroke-width="{weight}"{wobble}/>')
-            # line-up number, sitting on the trunk
-            cx = x + TRUNK_DX
-            self._add(f'<circle cx="{cx:.1f}" cy="{y:.1f}" r="12" fill="{self.paper}" stroke="{INK}" stroke-width="1.5"/>')
-            self._text(cx, y + 5, str(b["number"]), 14, "middle", bold=True)
-            # band name + dates, ruled off from the members
-            ty = y + PAD
-            for line in b["name_lines"]:
-                ty += b["name_size"] + 3
-                self._text(x + w / 2, ty - 3, line, b["name_size"], "middle", fit=w - 2 * PAD - 18, bold=True)
-            ty += DATE_SIZE + 4
-            self._text(x + w / 2, ty - 2, b["date_label"], DATE_SIZE, "middle")
-            self._add(f'<line x1="{x + PAD:.1f}" y1="{ty + 3:.1f}" x2="{x + w - PAD:.1f}" y2="{ty + 3:.1f}" '
-                      f'stroke="{INK}" stroke-width="0.6"/>')
-            # members: NAME ....... instrument
-            inner = w - 2 * PAD
             for m in b["members"]:
-                my = y + m["dy"] + MEMBER_SIZE / 2 - 1
-                roles_w = text_width(m["roles"], HAND, ROLE_SIZE) if m["roles"] else 0
-                if m["roles"]:
-                    self._text(x + w - PAD, my, m["roles"], ROLE_SIZE, "end")
-                self._text(x + PAD, my, m["name"], MEMBER_SIZE, fit=inner - roles_w - 8)
+                cx = m["cx"]
+                self._add(f'<line x1="{cx:.1f}" y1="{bar_y:.1f}" x2="{cx:.1f}" y2="{bar_y + TICK - 2:.1f}" '
+                          f'stroke="{INK}" stroke-width="1.2"/>')
+                for i, line in enumerate(m["lines"]):
+                    self._text(cx, m["y_name"] + i * MEMBER_LINE, line, MEMBER_SIZE, "middle", fit=COL_W - 6,
+                               family=LETTERING, weight=700)
+                ry = m["y_name"] + (len(m["lines"]) - 1) * MEMBER_LINE + ROLE_LINE + 1
+                for i, role in enumerate(m["roles"]):
+                    self._text(cx, ry + i * ROLE_LINE, role, ROLE_SIZE, "middle", fit=COL_W - 4)
             if b["overflow"]:
-                oy = y + b["header_h"] + len(b["members"]) * ROW_H + MEMBER_SIZE / 2 + 6
-                self._text(x + PAD, oy, f"+ {b['overflow']} MORE", ROLE_SIZE)
-            # notes hanging off the trunk
-            ny = y + h + 8
-            for note in b["notes"]:
-                ny += NOTE_LINE
-                self._text(x + TRUNK_DX + 10, ny - 3, note, NOTE_SIZE)
+                last = max(b["members"], key=lambda m: m["cx"])
+                self._text(last["cx"] + COL_W / 2, b["y"] + b["h"], f"+ {b['overflow']} more", ROLE_SIZE, "end")
+            # a paragraph of notes beside the line-up
+            for i, note in enumerate(b["notes"]):
+                self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
 
     def _footer(self, W, H):
         fy = self.L["footer_y"]
         x0 = 60
         self._text(x0, fy, "KEY", 20, bold=True)
         items = [
-            ("trunk", "LINE-UP CHANGES WITHIN A BAND"),
+            ("trunk", "A MUSICIAN'S LINE, FROM ONE LINE-UP TO THE NEXT"),
             ("dashed", "BAND SPLIT, LATER RE-FORMED"),
             ("move", "MUSICIAN MOVES ON TO ANOTHER BAND"),
         ]
         for i, (kind, label) in enumerate(items):
             y = fy + 30 + i * 26
             if kind == "move":
-                self._add(f'<path d="M{x0},{y - 12} h24 v8 h24" fill="none" stroke="{INK}" stroke-width="1.2" marker-end="url(#arrow)"/>')
+                self._add(f'<path d="M{x0},{y - 12} h24 v8 h24" fill="none" stroke="{INK}" stroke-width="1.2"/>')
             else:
-                dash = ' stroke-dasharray="10 6"' if kind == "dashed" else ""
-                self._add(f'<line x1="{x0}" y1="{y - 6}" x2="{x0 + 50}" y2="{y - 6}" stroke="{INK}" stroke-width="3"{dash}/>')
+                dash = ' stroke-dasharray="8 5"' if kind == "dashed" else ""
+                self._add(f'<line x1="{x0}" y1="{y - 6}" x2="{x0 + 50}" y2="{y - 6}" stroke="{INK}" stroke-width="1.3"{dash}/>')
             self._text(x0 + 64, y, label, 15)
         stats = self.L.get("stats", {})
         credit = self.credit or "RESEARCHED FROM MUSICBRAINZ · DRAWN BY THE ROCK FAMILY TREE GENERATOR"

@@ -34,7 +34,7 @@ def test_time_flows_down_the_page(layout):
 
 def test_everything_fits_on_the_paper(layout):
     W, H = layout["width"], layout["height"]
-    assert abs(H / W - 2 ** 0.5) < 0.01
+    assert abs(max(W, H) / min(W, H) - 2 ** 0.5) < 0.01
     for b in layout["boxes"]:
         assert 0 < b["x"] and b["x"] + b["w"] < W
         assert 0 < b["y"] and b["y"] + b["footprint"] < layout["footer_y"]
@@ -51,10 +51,33 @@ def test_member_moves_are_routed(layout):
 
 def test_frame_style_notes(layout):
     notes = [" ".join(b["notes"]) for b in layout["boxes"]]
-    assert any("ERIC CLAPTON LEFT TO JOIN JOHN MAYALL'S BLUESBREAKERS" in n for n in notes)
-    assert any("KEITH RELF DIED MAY 76" in n for n in notes)
-    assert any(n.startswith("SPLIT") for n in notes)
-    assert all(b["date_label"].startswith("(") for b in layout["boxes"])
+    assert any("Eric Clapton left to join John Mayall's Bluesbreakers." in n for n in notes)
+    assert any("Keith Relf died in May 1976." in n for n in notes)
+    assert any(n.startswith("Split in") for n in notes)
+    assert all(len(b["dates"]) == 2 for b in layout["boxes"])  # stacked beside the band name
+
+
+def test_members_hang_side_by_side(layout):
+    yb = next(b for b in layout["boxes"] if b["band_name"] == "The Yardbirds" and b["number"] == 1)
+    assert [m["lines"] for m in yb["members"]][:2] == [["KEITH", "RELF"], ["CHRIS", "DREJA"]]
+    assert yb["members"][0]["roles"] == ["vocals", "harmonica"]
+    xs = [m["cx"] for m in yb["members"]]
+    assert xs == sorted(xs) and len(set(xs)) == len(xs)
+
+
+def test_replacement_takes_the_vacated_column(layout):
+    yb = {b["number"]: b for b in layout["boxes"] if b["band_name"] == "The Yardbirds"}
+    col = lambda n, who: next(m["col"] for m in yb[n]["members"] if who in m["person_id"])
+    assert col(1, "top-topham") == col(2, "eric-clapton") == col(3, "jeff-beck")
+    assert col(1, "keith-relf") == col(5, "keith-relf")
+
+
+def test_each_musician_line_runs_down_to_the_next_lineup(layout):
+    boxes = {b["id"]: b for b in layout["boxes"]}
+    yb1, yb2 = boxes["demo:yardbirds#1"], boxes["demo:yardbirds#2"]
+    relf = [t for t in layout["trunks"] if t["person_id"].endswith("keith-relf")
+            and t["points"][0][1] < yb2["y"] and t["points"][-1][1] == yb2["bar_y"]]
+    assert relf and relf[0]["points"][0][1] >= yb1["bar_y"]
 
 
 def test_svg_is_valid_and_self_contained(layout, tmp_path):
@@ -69,8 +92,9 @@ def test_default_style_is_ink_on_white(layout):
     svg = Artist(layout).render()
     assert 'fill="#ffffff"' in svg
     assert 'filter="url(#rough)"' not in svg and 'url(#paper)' not in svg
-    assert "font-family:'Architects Daughter'" in svg
-    assert "PAUL SAMWELL-SMITH" in svg  # architect's capitals throughout
+    assert "font-family:'Architects Daughter'" in svg and "font-family:'Amatic SC'" in svg
+    assert ">SAMWELL-SMITH<" in svg  # surname lettered under the first name
+    assert svg.count("<rect") == 2  # background and border only: line-ups are not boxed
 
 
 def test_optional_extras(layout):
