@@ -302,6 +302,9 @@ class Cartographer:
                 notes.append(f"{m.name} {'went on' if band_over else 'left'} to {verb} {d_band.name}.")
             elif not band_over:
                 notes.append(f"{m.name} left in {_long_date(lu.end_label)}.")
+        if lu.merged:
+            n = lu.merged
+            notes.insert(0, f"Simplified to fit: {n} brief line-up{'s' if n > 1 else ''} folded in here.")
         if band_over:
             if nxt is not None:
                 notes.insert(0, f"Split in {_long_date(lu.end_label)}; re-formed {_long_date(nxt.start_label)}.")

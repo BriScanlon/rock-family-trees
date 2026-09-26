@@ -58,7 +58,8 @@ def generate(artist_id, job_id, options=None, progress=None):
     subtitle = opts["subtitle"]
     if subtitle is None:
         years = [b.start for b in tree.bands.values()] + [b.end for b in tree.bands.values()]
-        subtitle = f"{len(tree.bands)} bands · {int(min(years))} – {int(max(years))}"
+        n = len(tree.bands)
+        subtitle = f"{n} band{'s' if n != 1 else ''} · {int(min(years))} – {int(max(years))}"
     layout["subtitle"] = subtitle
     layout["stats"].update(fit)
 

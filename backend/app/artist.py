@@ -222,12 +222,17 @@ class Artist:
         stats = self.L.get("stats", {})
         credit = self.credit or "RESEARCHED FROM MUSICBRAINZ · DRAWN BY THE ROCK FAMILY TREE GENERATOR"
         lines = [
-            f"{stats.get('bands', 0)} BANDS · {stats.get('lineups', 0)} LINE-UPS · {stats.get('people', 0)} MUSICIANS",
+            f"{_count(stats.get('bands', 0), 'BAND')} · {_count(stats.get('lineups', 0), 'LINE-UP')} · "
+            f"{_count(stats.get('people', 0), 'MUSICIAN')}",
             credit.upper(),
             f"IN HOMAGE TO PETE FRAME'S ROCK FAMILY TREES · {date.today():%B %Y}".upper(),
         ]
         for i, line in enumerate(lines):
             self._text(W - 60, fy + 30 + i * 24, line, 15, "end", fit=W / 2 - 80)
+
+
+def _count(n, word):
+    return f"{n} {word}{'' if n == 1 else 'S'}"
 
 
 def _rounded_path(points, r):

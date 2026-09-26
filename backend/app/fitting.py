@@ -2,10 +2,11 @@
 
 A poster is only worth printing if it can be read, so for a given sheet
 (A4 up to A0) we trim the tree until its smallest text prints at
-MIN_PRINT_PT or more. Busy bands lose their briefest line-ups first (down to
-a floor), then the least-connected bands are dropped. Bands are kept in the
-refiner's priority order - the root first, then the most connected - so
-whatever remains is still one connected family.
+MIN_PRINT_PT or more. The least-connected bands are dropped first, keeping
+the refiner's priority order (the root first, then the bands linked by the
+longest-serving musicians) so whatever remains is one connected family.
+Only if the root band alone still won't fit are its briefest line-ups
+folded together - and the poster says so, since that loses detail.
 """
 from app.cartographer import MIN_PRINT_PT, PAPER_MM, Cartographer
 from app.refiner import Refiner
@@ -56,7 +57,7 @@ def fit_tree(harvest, paper="auto", max_bands=24, title=None, **layout_kw):
                 return result(full, layout)
         paper = "A0"
 
-    # Most bands first, then the most line-ups per band, that still read well.
+    # Full detail with as many bands as fit; fewer line-ups only as a last resort.
     best = None
     for cap in LINEUP_CAPS:
         tree = trees[cap]
@@ -70,8 +71,8 @@ def fit_tree(harvest, paper="auto", max_bands=24, title=None, **layout_kw):
                 lo = mid + 1
             else:
                 hi = mid - 1
-        if best and best[0] == len(tree.bands):
-            break  # everything fits at this cap
+        if best:
+            break  # something fits without simplifying line-ups any further
     if best is None:  # even the root band alone is too big: draw it anyway, as small as it must be
         tree = _subset(trees[LINEUP_CAPS[-1]], 1)
         return result(tree, _layout(tree, paper, **layout_kw))

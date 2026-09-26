@@ -33,7 +33,7 @@ cd frontend && npm install && npm run dev        # http://localhost:3000
 
 ### Offline demo
 
-Search for "yardbirds" (or click *Try the offline demo*) to draw the Yardbirds family — Cream, Led Zeppelin, Fleetwood Mac, Faces and more — from built-in data. It needs no network access. The dates are approximate.
+Search for "yardbirds" or "ac/dc" (or click *Try the offline demo*) to draw from built-in data with no network access: the Yardbirds family (Cream, Led Zeppelin, Fleetwood Mac, Faces…) or AC/DC's (The Easybeats, Fraternity, Geordie, Rose Tattoo, Guns N' Roses…). The two families connect through Jimmy Page and The Firm. Dates are approximate, from general knowledge rather than MusicBrainz.
 
 ## How it works
 
@@ -62,7 +62,7 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `depth` | 2 | 1 = just the band, 2 = plus members' other bands, 3–4 = further out |
 | `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
 | `title`, `subtitle` | auto | Poster heading |
-| `paper` | `auto` | `auto` picks the smallest A-size that holds the whole family with the smallest text at ≥ 6.5pt. `A4`–`A0` fit the tree to that sheet: busy bands lose their briefest line-ups, then the least-connected bands are left out (reported in the job's `stats`). `none` draws at natural size |
+| `paper` | `auto` | `auto` picks the smallest A-size that holds the whole family with the smallest text at ≥ 6.5pt. `A4`–`A0` fit the tree to that sheet: the least-connected bands are left out first (ranked by how long their shared musicians served in the family); only if the main band alone won't fit are its briefest line-ups folded together, and the poster notes it (all reported in the job's `stats`). `none` draws at natural size |
 | `lettering` | `auto` | `classic` (neat architect's hand, as on Frame's 60s/70s rock trees), `heavy` (tall narrow capitals, as on his Black Sabbath / Ozzy tree) or `auto` (picked from the band's MusicBrainz genres) |
 | `hand_drawn` | false | Slight ink wobble on lines and boxes (Frame used a ruler) |
 | `aged_paper` | false | Cream paper tint instead of white |

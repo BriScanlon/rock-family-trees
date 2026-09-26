@@ -1,7 +1,7 @@
 """Turns harvested MusicBrainz records into a family-tree model:
 bands -> numbered line-ups -> members, plus who died when and which bands
 to keep. Times are fractional years (1966.25 == April 1966)."""
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date
 from typing import Dict, List, Optional
 
@@ -100,6 +100,7 @@ class Lineup(BaseModel):
     end_label: str
     members: List[LineupMember]
     after_gap: bool = False  # band was inactive just before this line-up
+    merged: int = 0          # brief line-ups folded into this one to fit the page
     ongoing: bool = False
 
 
@@ -286,6 +287,7 @@ class Refiner:
             if cur.end - cur.start > prev.end - prev.start:
                 prev.members = cur.members
             prev.end = cur.end
+            prev.merged += 1 + cur.merged
             del lineups[i]
 
     # -- selection ------------------------------------------------------
@@ -295,6 +297,16 @@ class Refiner:
             return {}
         people_in = lambda b: {s.person_id for s in b.stints}
         chosen_people = set().union(*(people_in(b) for b in chosen.values()))
+        # Years each musician served in the bands chosen so far: a band linked
+        # through a 36-year singer matters more than one linked by a stand-in.
+        tenure = defaultdict(float)
+
+        def add_tenure(band):
+            for st in band.stints:
+                tenure[st.person_id] += st.end - st.start
+
+        for b in chosen.values():
+            add_tenure(b)
 
         rest = [b for b in bands.values() if b.id not in chosen]
         for level in sorted({b.level for b in rest}):
@@ -304,13 +316,14 @@ class Refiner:
                     continue
                 shared = people_in(b) & chosen_people
                 if shared:
-                    candidates.append((len(shared), b))
+                    candidates.append((sum(tenure[p] for p in shared), b))
             candidates.sort(key=lambda c: (-c[0], c[1].start, c[1].name))
             for _, b in candidates:
                 if len(chosen) >= self.max_bands:
                     return chosen
                 chosen[b.id] = b
                 chosen_people |= people_in(b)
+                add_tenure(b)
         return chosen
 
 

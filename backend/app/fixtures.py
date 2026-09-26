@@ -164,13 +164,184 @@ BANDS = {
     ]),
 }
 
+# --- AC/DC family ---
+PEOPLE.update({
+    "angus-young": ("Angus Young", None), "malcolm-young": ("Malcolm Young", "2017-11-18"),
+    "dave-evans": ("Dave Evans", None), "larry-van-kriedt": ("Larry Van Kriedt", None),
+    "colin-burgess": ("Colin Burgess", None), "rob-bailey": ("Rob Bailey", None),
+    "peter-clack": ("Peter Clack", None), "bon-scott": ("Bon Scott", "1980-02-19"),
+    "mark-evans": ("Mark Evans", None), "phil-rudd": ("Phil Rudd", None),
+    "cliff-williams": ("Cliff Williams", None), "brian-johnson": ("Brian Johnson", None),
+    "simon-wright": ("Simon Wright", None), "chris-slade": ("Chris Slade", None),
+    "stevie-young": ("Stevie Young", None), "axl-rose": ("Axl Rose", None),
+    "george-young": ("George Young", "2017-10-22"), "harry-vanda": ("Harry Vanda", None),
+    "stevie-wright": ("Stevie Wright", "2015-12-26"), "dick-diamonde": ("Dick Diamonde", None),
+    "snowy-fleet": ("Snowy Fleet", None), "tony-cahill": ("Tony Cahill", None),
+    "vince-lovegrove": ("Vince Lovegrove", "2012-03-24"), "wyn-milson": ("Wyn Milson", None),
+    "bruce-howe": ("Bruce Howe", None), "mick-jurd": ("Mick Jurd", None),
+    "john-bisset": ("John Bisset", None), "john-freeman": ("John Freeman", None),
+    "uncle-john-ayers": ("Uncle John Ayers", None), "vic-malcolm": ("Vic Malcolm", None),
+    "tom-hill": ("Tom Hill", None), "brian-gibson": ("Brian Gibson", None),
+    "angry-anderson": ("Angry Anderson", None), "geordie-leach": ("Geordie Leach", None),
+    "paul-grant": ("Paul Grant", None), "pete-wells": ("Pete Wells", "2006-03-27"),
+    "mick-cocks": ("Mick Cocks", "2009-12-22"), "dallas-royall": ("Dallas Royall", "1991-10-01"),
+    "mick-stubbs": ("Mick Stubbs", None), "laurie-wisefield": ("Laurie Wisefield", None),
+    "mick-cook": ("Mick Cook", None), "jim-diamond": ("Jim Diamond", "2015-10-08"),
+    "danny-mcintosh": ("Danny McIntosh", None), "graham-broad": ("Graham Broad", None),
+    "jim-keays": ("Jim Keays", "2014-06-13"), "doug-ford": ("Doug Ford", None),
+    "glenn-wheatley": ("Glenn Wheatley", "2022-02-01"), "manfred-mann": ("Manfred Mann", None),
+    "mick-rogers": ("Mick Rogers", None), "colin-pattenden": ("Colin Pattenden", None),
+    "chris-thompson": ("Chris Thompson", None), "dave-flett": ("Dave Flett", None),
+    "paul-rodgers": ("Paul Rodgers", None), "tony-franklin": ("Tony Franklin", None),
+    "slash": ("Slash", None), "izzy-stradlin": ("Izzy Stradlin", None),
+    "duff-mckagan": ("Duff McKagan", None), "steven-adler": ("Steven Adler", None),
+    "matt-sorum": ("Matt Sorum", None), "dizzy-reed": ("Dizzy Reed", None),
+    "gilby-clarke": ("Gilby Clarke", None), "tommy-stinson": ("Tommy Stinson", None),
+    "richard-fortus": ("Richard Fortus", None), "frank-ferrer": ("Frank Ferrer", None),
+    "melissa-reese": ("Melissa Reese", None),
+})
+
+BANDS.update({
+    "acdc": ("AC/DC", "1973-11", None, [
+        ("malcolm-young", "1973-11", "2014-09", [G]),
+        ("angus-young", "1973-11", None, ["lead guitar"]),
+        ("dave-evans", "1973-11", "1974-09", [V]),
+        ("larry-van-kriedt", "1973-11", "1974-02", [B]),
+        ("colin-burgess", "1973-11", "1974-02", [D]),
+        ("rob-bailey", "1974-03", "1974-12", [B]),
+        ("peter-clack", "1974-03", "1975-01", [D]),
+        ("bon-scott", "1974-10", "1980-02", [V]),
+        ("phil-rudd", "1975-01", "1983-08", [D]),
+        ("mark-evans", "1975-03", "1977-06", [B]),
+        ("cliff-williams", "1977-06", "2016-09", [B]),
+        ("brian-johnson", "1980-04", "2016-03", [V]),
+        ("simon-wright", "1983-08", "1989-11", [D]),
+        ("chris-slade", "1989-11", "1994-08", [D]),
+        ("phil-rudd", "1994-08", "2014-11", [D]),
+        ("stevie-young", "2014-09", "2016-09", [G]),
+        ("chris-slade", "2015-02", "2016-09", [D]),
+        ("axl-rose", "2016-04", "2016-09", [V]),
+        ("brian-johnson", "2018-08", None, [V]),
+        ("stevie-young", "2018-08", None, [G]),
+        ("cliff-williams", "2018-08", None, [B]),
+        ("phil-rudd", "2018-08", None, [D]),
+    ]),
+    "marcus-hook-roll-band": ("Marcus Hook Roll Band", "1972-09", "1974-06", [
+        ("harry-vanda", "1972-09", "1974-06", [G]),
+        ("george-young", "1972-09", "1974-06", [B, V]),
+        ("malcolm-young", "1972-09", "1973-10", [G]),
+        ("angus-young", "1972-09", "1973-10", [G]),
+    ]),
+    "easybeats": ("The Easybeats", "1964-06", "1969-10", [
+        ("stevie-wright", "1964-06", "1969-10", [V]),
+        ("harry-vanda", "1964-06", "1969-10", [G]),
+        ("george-young", "1964-06", "1969-10", ["rhythm guitar"]),
+        ("dick-diamonde", "1964-06", "1969-10", [B]),
+        ("snowy-fleet", "1964-06", "1967-01", [D]),
+        ("tony-cahill", "1967-01", "1969-10", [D]),
+    ]),
+    "flash-and-the-pan": ("Flash and the Pan", "1976-06", "1992-12", [
+        ("harry-vanda", "1976-06", "1992-12", [G, K]),
+        ("george-young", "1976-06", "1992-12", [V, K]),
+    ]),
+    "valentines": ("The Valentines", "1966-01", "1970-08", [
+        ("bon-scott", "1966-01", "1970-08", [V]),
+        ("vince-lovegrove", "1966-01", "1970-08", [V]),
+        ("wyn-milson", "1966-01", "1970-08", [G]),
+    ]),
+    "fraternity": ("Fraternity", "1970-01", "1974-06", [
+        ("bon-scott", "1970-01", "1973-12", [V]),
+        ("bruce-howe", "1970-01", "1974-06", [B]),
+        ("mick-jurd", "1970-01", "1972-12", [G]),
+        ("john-bisset", "1970-01", "1972-12", [K]),
+        ("uncle-john-ayers", "1970-06", "1973-12", ["harmonica"]),
+        ("john-freeman", "1971-01", "1974-06", [D]),
+    ]),
+    "geordie": ("Geordie", "1971-06", "1978-06", [
+        ("brian-johnson", "1971-06", "1978-06", [V]),
+        ("vic-malcolm", "1971-06", "1975-06", [G]),
+        ("tom-hill", "1971-06", "1978-06", [B]),
+        ("brian-gibson", "1971-06", "1978-06", [D]),
+    ]),
+    "buster-brown": ("Buster Brown", "1973-06", "1975-06", [
+        ("angry-anderson", "1973-06", "1975-06", [V]),
+        ("geordie-leach", "1973-06", "1975-06", [B]),
+        ("paul-grant", "1973-06", "1975-06", [G]),
+        ("phil-rudd", "1973-06", "1974-12", [D]),
+    ]),
+    "rose-tattoo": ("Rose Tattoo", "1976-01", "1987-06", [
+        ("angry-anderson", "1976-01", "1987-06", [V]),
+        ("pete-wells", "1976-01", "1983-06", ["slide guitar"]),
+        ("mick-cocks", "1976-06", "1983-06", [G]),
+        ("geordie-leach", "1976-06", "1983-06", [B]),
+        ("dallas-royall", "1976-06", "1983-06", [D]),
+    ]),
+    "home": ("Home", "1970-06", "1974-06", [
+        ("mick-stubbs", "1970-06", "1974-06", [V]),
+        ("laurie-wisefield", "1970-06", "1974-06", [G]),
+        ("cliff-williams", "1970-06", "1974-06", [B]),
+        ("mick-cook", "1970-06", "1974-06", [D]),
+    ]),
+    "bandit": ("Bandit", "1975-06", "1977-06", [
+        ("jim-diamond", "1975-06", "1977-06", [V]),
+        ("danny-mcintosh", "1975-06", "1977-06", [G]),
+        ("cliff-williams", "1975-06", "1977-06", [B]),
+        ("graham-broad", "1975-06", "1977-06", [D]),
+    ]),
+    "masters-apprentices": ("The Masters Apprentices", "1968-06", "1972-06", [
+        ("jim-keays", "1968-06", "1972-06", [V]),
+        ("doug-ford", "1968-06", "1972-06", [G]),
+        ("glenn-wheatley", "1968-06", "1972-01", [B]),
+        ("colin-burgess", "1968-09", "1972-06", [D]),
+    ]),
+    "manfreds-earth-band": ("Manfred Mann's Earth Band", "1971-06", "1987-12", [
+        ("manfred-mann", "1971-06", "1987-12", [K]),
+        ("mick-rogers", "1971-06", "1975-12", [G, V]),
+        ("colin-pattenden", "1971-06", "1977-06", [B]),
+        ("chris-slade", "1971-06", "1978-06", [D]),
+        ("chris-thompson", "1975-12", "1987-12", [V]),
+        ("dave-flett", "1975-12", "1977-06", [G]),
+    ]),
+    "the-firm": ("The Firm", "1984-01", "1986-12", [
+        ("jimmy-page", "1984-01", "1986-12", [G]),
+        ("paul-rodgers", "1984-01", "1986-12", [V]),
+        ("tony-franklin", "1984-01", "1986-12", [B]),
+        ("chris-slade", "1984-01", "1986-12", [D]),
+    ]),
+    "guns-n-roses": ("Guns N' Roses", "1985-06", None, [
+        ("axl-rose", "1985-06", None, [V]),
+        ("slash", "1985-06", "1996-10", ["lead guitar"]),
+        ("izzy-stradlin", "1985-06", "1991-11", ["rhythm guitar"]),
+        ("duff-mckagan", "1985-06", "1997-08", [B]),
+        ("steven-adler", "1985-06", "1990-07", [D]),
+        ("matt-sorum", "1990-07", "1997-04", [D]),
+        ("dizzy-reed", "1990-01", None, [K]),
+        ("gilby-clarke", "1991-11", "1994-06", ["rhythm guitar"]),
+        ("tommy-stinson", "1998-01", "2016-01", [B]),
+        ("richard-fortus", "2002-01", None, ["rhythm guitar"]),
+        ("frank-ferrer", "2006-06", None, [D]),
+        ("slash", "2016-01", None, ["lead guitar"]),
+        ("duff-mckagan", "2016-01", None, [B]),
+        ("melissa-reese", "2016-06", None, [K]),
+    ]),
+})
+
+GENRES = {"yardbirds": ["blues rock", "rhythm and blues"], "acdc": ["hard rock", "heavy metal"]}
+ROOT_KEYS = {"yardbirds", "acdc"}
+
 SAMPLES = {
     "yardbirds": {
         "id": "demo:yardbirds",
         "name": "The Yardbirds (demo)",
         "description": "Offline sample: The Yardbirds and the bands they spawned. Dates are approximate.",
         "default_depth": 3,
-    }
+    },
+    "acdc": {
+        "id": "demo:acdc",
+        "name": "AC/DC (demo)",
+        "description": "Offline sample: AC/DC, the bands they came from and went on to. Dates are approximate.",
+        "default_depth": 3,
+    },
 }
 
 
@@ -179,7 +350,7 @@ def _pid(key):
 
 
 def _bid(key):
-    return f"demo:{key}" if key == "yardbirds" else f"demo:band:{key}"
+    return f"demo:{key}" if key in ROOT_KEYS else f"demo:band:{key}"
 
 
 def build_records():
@@ -193,7 +364,7 @@ def build_records():
         band = {
             "mbid": _bid(key), "name": name, "type": "Group", "disambiguation": "",
             "begin": begin, "end": end, "ended": end is not None, "memberships": [],
-            "genres": ["blues rock", "rhythm and blues"] if key == "yardbirds" else [],
+            "genres": GENRES.get(key, []),
         }
         for person, m_begin, m_end, attrs in members:
             m = {
