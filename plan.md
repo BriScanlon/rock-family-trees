@@ -1,3 +1,5 @@
+> **Historical.** This was the plan for the Neo4j/RabbitMQ refactor, which is done. Current state and next steps: `docs/PROGRESS.md`, `CLAUDE.md` and the GitHub issues.
+
 # Refactoring Plan: Neo4j Knowledge Graph & RabbitMQ Integration
 
 ## Objective
