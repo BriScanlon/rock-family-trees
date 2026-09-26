@@ -222,10 +222,14 @@ export default function App() {
               Paper
               <select value={options.paper} onChange={(e) => setOption('paper', e.target.value)}
                       className="w-full mt-1 px-2 py-1 border-2 border-border bg-white">
-                <option value="auto">Auto — smallest sheet that keeps the text readable</option>
+                <option value="auto">Auto — smallest sheet that fits the whole family</option>
                 {['A0', 'A1', 'A2', 'A3', 'A4'].map((p) => <option key={p} value={p}>{p} poster</option>)}
-                <option value="none">Fit to content</option>
+                <option value="none">Fit to content (no sheet)</option>
               </select>
+              <span className="text-xs text-text-secondary">
+                On a fixed sheet the tree is trimmed to stay readable: busy bands lose their briefest
+                line-ups, then the most distant bands are left out.
+              </span>
             </label>
             <p className="text-xs text-text-secondary">Defaults match Pete Frame's originals: black ink on white, ruled lines.</p>
             <Toggle label="Ink wobble on lines" checked={options.hand_drawn} onChange={(v) => setOption('hand_drawn', v)} />
@@ -275,9 +279,21 @@ export default function App() {
             <>
               <TreeViewer key={result.url} src={result.url} title={result.title} />
               {result.stats?.paper && (
-                <div className={`absolute top-3 left-3 ink-box px-3 py-2 text-sm ${result.stats.smallest_text_pt < 6.5 ? 'text-red-900' : ''}`}>
-                  {result.stats.paper} poster · smallest text prints at {result.stats.smallest_text_pt}pt
-                  {result.stats.smallest_text_pt < 6.5 && ' — try a bigger sheet or fewer bands'}
+                <div className={`absolute top-3 left-3 max-w-md ink-box px-3 py-2 text-sm ${result.stats.readable === false ? 'text-red-900' : ''}`}>
+                  <p>
+                    <b>{result.stats.paper}</b> poster · {result.stats.bands_shown ?? result.stats.bands}
+                    {result.stats.bands_available > result.stats.bands_shown && ` of ${result.stats.bands_available}`} bands
+                    {result.stats.lineups_available > result.stats.lineups_shown &&
+                      ` · ${result.stats.lineups_shown} of ${result.stats.lineups_available} line-ups`}
+                    {' '}· smallest text {result.stats.smallest_text_pt}pt
+                  </p>
+                  {result.stats.omitted_bands?.length > 0 && (
+                    <p className="text-xs text-text-secondary mt-1">
+                      Left out to fit: {result.stats.omitted_bands.join(', ')}. Choose a bigger sheet to include them.
+                    </p>
+                  )}
+                  {result.stats.readable === false &&
+                    <p className="text-xs mt-1">Even the main band is too big for this sheet to print readably.</p>}
                 </div>
               )}
             </>

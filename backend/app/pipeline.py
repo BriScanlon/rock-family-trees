@@ -3,11 +3,10 @@ import json
 import os
 
 from app.artist import Artist
-from app.cartographer import Cartographer
+from app.fitting import fit_tree
 from app.fonts import STYLES, lettering_for
 from app.fixtures import OfflineClient, build_records
 from app.harvester import Harvester
-from app.refiner import Refiner
 from app.store import MemoryStore
 
 ARTIFACT_DIR = os.getenv("ARTIFACT_DIR", "artifacts")
@@ -44,22 +43,24 @@ def generate(artist_id, job_id, options=None, progress=None):
         progress=lambda frac, msg: progress(5 + int(frac * 65), msg),
     )
 
-    progress(72, "Working out who played with whom, and when")
-    tree = Refiner(max_bands=opts["max_bands"]).build(harvest, title=opts["title"])
-    if not tree.bands:
-        raise ValueError(f"No dated band line-ups found for {harvest['root_name']} on MusicBrainz")
-
-    progress(82, "Drawing up the family tree")
-    subtitle = opts["subtitle"]
-    if subtitle is None:
-        years = [b.start for b in tree.bands.values()] + [b.end for b in tree.bands.values()]
-        subtitle = f"{len(tree.bands)} bands · {int(min(years))} – {int(max(years))}"
     lettering = opts["lettering"]
     if lettering not in STYLES:  # "auto": follow the root band's genres
         genres = [g for b in harvest["root_bands"] for g in harvest["records"].get(b, {}).get("genres", [])]
         lettering = lettering_for(genres)
-    layout = Cartographer(tree, paper=opts["paper"], subtitle=subtitle, timeline=opts["timeline"],
-                          lettering=lettering).layout()
+
+    progress(75, "Working out who played with whom, and how much fits on the paper")
+    tree, layout, fit = fit_tree(harvest, paper=opts["paper"], max_bands=opts["max_bands"], title=opts["title"],
+                                 timeline=opts["timeline"], lettering=lettering)
+    if not tree.bands:
+        raise ValueError(f"No dated band line-ups found for {harvest['root_name']} on MusicBrainz")
+
+    progress(88, "Drawing up the family tree")
+    subtitle = opts["subtitle"]
+    if subtitle is None:
+        years = [b.start for b in tree.bands.values()] + [b.end for b in tree.bands.values()]
+        subtitle = f"{len(tree.bands)} bands · {int(min(years))} – {int(max(years))}"
+    layout["subtitle"] = subtitle
+    layout["stats"].update(fit)
 
     progress(92, "Inking the lines")
     svg_path = os.path.join(ARTIFACT_DIR, f"{job_id}.svg")

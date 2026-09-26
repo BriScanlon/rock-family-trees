@@ -49,6 +49,7 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `app/store.py`, `app/graph_db.py` | Record cache: Neo4j when configured and reachable, otherwise JSON files |
 | `app/harvester.py` | Follows band → members → their other bands for *depth* generations, within a fetch budget |
 | `app/refiner.py` | Parses dates, splits each band's history into numbered line-ups, abbreviates instruments Frame-style (vcls, gtr, bs, drms, kybds…), picks the most connected bands |
+| `app/fitting.py` | Fits a tree to a sheet (A4–A0) so it prints readably, trimming line-ups and distant bands |
 | `app/cartographer.py` | Layout: time-proportional rows, lanes that put related bands side by side and are reused when bands end, a column per musician (replacements take the vacated column), per-musician lines, routing through the gutters, notes, paper sizing (A0–A4) |
 | `app/artist.py` | Renders the SVG in Frame's manner — black ink on white, tall hand-lettered capitals, unboxed line-ups, ruled lines — with the fonts embedded so it looks the same everywhere and prints at any size |
 | `app/jobs.py`, `app/worker.py` | Job progress (shared JSON files) and the Celery task |
@@ -61,7 +62,7 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `depth` | 2 | 1 = just the band, 2 = plus members' other bands, 3–4 = further out |
 | `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
 | `title`, `subtitle` | auto | Poster heading |
-| `paper` | `auto` | `auto` picks the smallest A-size on which the smallest text still prints at ≥ 6.5pt; or `A0`–`A4` (orientation chosen automatically) or `none` |
+| `paper` | `auto` | `auto` picks the smallest A-size that holds the whole family with the smallest text at ≥ 6.5pt. `A4`–`A0` fit the tree to that sheet: busy bands lose their briefest line-ups, then the least-connected bands are left out (reported in the job's `stats`). `none` draws at natural size |
 | `lettering` | `auto` | `classic` (neat architect's hand, as on Frame's 60s/70s rock trees), `heavy` (tall narrow capitals, as on his Black Sabbath / Ozzy tree) or `auto` (picked from the band's MusicBrainz genres) |
 | `hand_drawn` | false | Slight ink wobble on lines and boxes (Frame used a ruler) |
 | `aged_paper` | false | Cream paper tint instead of white |
