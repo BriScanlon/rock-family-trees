@@ -13,8 +13,6 @@ export default {
         border: 'var(--color-border)',
       },
       fontFamily: {
-        serif: ['var(--font-serif)'],
-        marker: ['var(--font-marker)'],
         sans: ['var(--font-sans)'],
       },
     },

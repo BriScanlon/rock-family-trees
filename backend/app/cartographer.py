@@ -14,7 +14,7 @@
 import math
 from collections import defaultdict
 
-from app.fonts import HAND, MARKER, text_width, wrap
+from app.fonts import HAND, text_width, wrap
 
 LANE_W = 250
 GUTTER = 70
@@ -24,15 +24,15 @@ TITLE_H = 250
 FOOTER_H = 190
 
 PAD = 10
-NAME_SIZE = 21        # band name
+NAME_SIZE = 22        # band name
 DATE_SIZE = 13
-MEMBER_SIZE = 14
-ROLE_SIZE = 11
+MEMBER_SIZE = 13
+ROLE_SIZE = 10
 ROW_H = 19
-NOTE_SIZE = 12
-NOTE_LINE = 15
+NOTE_SIZE = 11
+NOTE_LINE = 14
 MAX_MEMBERS = 14
-MAX_NOTES = 4
+MAX_NOTES = 6
 TRUNK_DX = 16         # trunk runs this far in from the box's left edge
 
 PX_PER_YEAR = 75
@@ -47,8 +47,10 @@ PAPER_MM = {"A0": (841, 1189), "A1": (594, 841), "A2": (420, 594), "A3": (297, 4
 
 
 class Cartographer:
-    def __init__(self, tree, paper="A1", subtitle=None):
+    def __init__(self, tree, paper="A1", subtitle=None, timeline=False):
         self.tree = tree
+        self.timeline = timeline
+        self.axis_w = AXIS_W if timeline else 0
         self.paper = paper if paper in PAPER_MM else None
         self.subtitle = subtitle
         self.boxes = {}
@@ -74,7 +76,7 @@ class Cartographer:
         trunks = self._trunks(bands)
         edges = self._route_edges()
 
-        content_w = self._lane_x(self.lane_count) + AXIS_W + MARGIN
+        content_w = self._lane_x(self.lane_count) + self.axis_w + MARGIN
         content_h = max(b["y"] + b["footprint"] for b in self.boxes.values()) + 60
         width, height, offset_x = self._paper_size(content_w, content_h + FOOTER_H)
         self._shift(offset_x, trunks, edges)
@@ -83,6 +85,7 @@ class Cartographer:
         return {
             "width": width, "height": height, "paper": self.paper,
             "title": self.tree.title, "subtitle": self.subtitle,
+            "timeline": self.timeline,
             "axis": {"left": offset_x + MARGIN + AXIS_W / 2,
                      "right": offset_x + content_w - MARGIN - AXIS_W / 2,
                      "top": TITLE_H - 20, "bottom": content_h},
@@ -95,7 +98,7 @@ class Cartographer:
         }
 
     def _lane_x(self, lane):
-        return MARGIN + AXIS_W + GUTTER + lane * (LANE_W + GUTTER)
+        return MARGIN + self.axis_w + GUTTER + lane * (LANE_W + GUTTER)
 
     def _gutter_x(self, gutter):
         """Centre of gutter i (gutter i sits left of lane i)."""
@@ -124,7 +127,7 @@ class Cartographer:
                 h = header_h + (len(members) + (1 if overflow else 0)) * ROW_H + PAD
                 notes = []
                 for note in self._notes(band, lu, nxt)[:MAX_NOTES]:
-                    notes += wrap(note, HAND, NOTE_SIZE, LANE_W - TRUNK_DX - 16)
+                    notes += wrap(note.upper(), HAND, NOTE_SIZE, LANE_W - TRUNK_DX - 16)
                 box_id = f"{band.id}#{lu.number}"
                 rows = {}
                 for j, m in enumerate(members):
@@ -133,26 +136,26 @@ class Cartographer:
                     "id": box_id, "band_id": band.id, "band_name": band.name,
                     "name_lines": name_lines, "name_size": name_size,
                     "number": lu.number, "start": lu.start, "end": lu.end,
-                    "date_label": f"{lu.start_label} – {lu.end_label}",
+                    "date_label": f"({lu.start_label} – {lu.end_label})".upper(),
                     "after_gap": lu.after_gap, "ongoing": lu.ongoing, "level": band.level,
                     "header_h": header_h, "w": LANE_W, "h": h,
-                    "members": [{"person_id": m.person_id, "name": m.name, "roles": ", ".join(m.roles),
+                    "members": [{"person_id": m.person_id, "name": m.name.upper(), "roles": ", ".join(m.roles).upper(),
                                  "dy": rows[m.person_id]} for m in members],
                     "overflow": overflow,
-                    "notes": notes[:MAX_NOTES + 2],
-                    "footprint": h + (8 + len(notes[:MAX_NOTES + 2]) * NOTE_LINE if notes else 0),
+                    "notes": notes[:MAX_NOTES + 3],
+                    "footprint": h + (8 + len(notes[:MAX_NOTES + 3]) * NOTE_LINE if notes else 0),
                 }
                 self.box_order.append(box_id)
 
     def _fit_band_name(self, name):
         avail = LANE_W - 2 * PAD - 18
-        if text_width(name, MARKER, NAME_SIZE) <= avail:
+        if text_width(name, HAND, NAME_SIZE) <= avail:
             return [name], NAME_SIZE
         for size in (19, 17):
-            lines = wrap(name, MARKER, size, avail)
-            if len(lines) <= 2 and all(text_width(l, MARKER, size) <= avail for l in lines):
+            lines = wrap(name, HAND, size, avail)
+            if len(lines) <= 2 and all(text_width(l, HAND, size) <= avail for l in lines):
                 return lines, size
-        return wrap(name, MARKER, 15, avail)[:3], 15
+        return wrap(name, HAND, 15, avail)[:3], 15
 
     def _notes(self, band, lu, nxt):
         """Frame-style annotations about the end of this line-up."""

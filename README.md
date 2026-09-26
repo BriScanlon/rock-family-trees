@@ -50,7 +50,7 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `app/harvester.py` | Follows band → members → their other bands for *depth* generations, within a fetch budget |
 | `app/refiner.py` | Parses dates, splits each band's history into numbered line-ups, abbreviates instruments Frame-style (vcls, gtr, bs, drms, kybds…), picks the most connected bands |
 | `app/cartographer.py` | Layout: time-proportional rows, lanes that put related bands side by side and are reused when bands end, zig-zagging for long-running bands, line routing through the gutters, notes, year scale, paper sizing (A0–A4) |
-| `app/artist.py` | Renders the SVG with embedded fonts, so the file looks the same everywhere and prints at any size |
+| `app/artist.py` | Renders the SVG in Frame's manner — black ink on white, architect's hand-lettered capitals, ruled lines, outlined title — with the font embedded so it looks the same everywhere and prints at any size |
 | `app/jobs.py`, `app/worker.py` | Job progress (shared JSON files) and the Celery task |
 
 ### Options (`POST /generate`)
@@ -62,7 +62,9 @@ search ─► harvester ─► refiner ─► cartographer ─► artist ─► 
 | `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
 | `title`, `subtitle` | auto | Poster heading |
 | `paper` | `A1` | `A0`–`A4` (portrait or landscape chosen automatically) or `none` |
-| `hand_drawn` | true | Slight ink wobble on lines and boxes |
+| `hand_drawn` | false | Slight ink wobble on lines and boxes (Frame used a ruler) |
+| `aged_paper` | false | Cream paper tint instead of white |
+| `timeline` | false | Year scale down both sides |
 | `coloured_lines` | false | Give each musician's lines their own colour |
 | `refresh` | false | Ignore the cache and re-fetch from MusicBrainz |
 
@@ -77,6 +79,6 @@ pytest                                   # unit, layout and API tests (no networ
 python tests/live_smoke.py               # against a running stack with MusicBrainz access
 ```
 
-Bundled fonts (Architects Daughter, Permanent Marker, Rye) are open-licensed; see `backend/app/assets/fonts/LICENSE.txt`.
+The bundled font (Architects Daughter) is open-licensed; see `backend/app/assets/fonts/LICENSE.txt`.
 
 This project is a homage: *Rock Family Trees* are the work of Pete Frame.

@@ -50,10 +50,11 @@ def test_member_moves_are_routed(layout):
 
 
 def test_frame_style_notes(layout):
-    notes = [n for b in layout["boxes"] for n in b["notes"]]
-    assert any("left to join John Mayall" in n for n in notes)
-    assert any(n.startswith("Keith Relf died") for n in notes)
-    assert any(n.startswith("Split") for n in notes)
+    notes = [" ".join(b["notes"]) for b in layout["boxes"]]
+    assert any("ERIC CLAPTON LEFT TO JOIN JOHN MAYALL'S BLUESBREAKERS" in n for n in notes)
+    assert any("KEITH RELF DIED MAY 76" in n for n in notes)
+    assert any(n.startswith("SPLIT") for n in notes)
+    assert all(b["date_label"].startswith("(") for b in layout["boxes"])
 
 
 def test_svg_is_valid_and_self_contained(layout, tmp_path):
@@ -62,3 +63,16 @@ def test_svg_is_valid_and_self_contained(layout, tmp_path):
     assert root.tag.endswith("svg") and root.get("width") == "594mm"
     assert "@font-face" in svg and "http" not in svg.replace("http://www.w3.org/2000/svg", "")
     assert "THE YARDBIRDS FAMILY TREE" in svg
+
+
+def test_default_style_is_ink_on_white(layout):
+    svg = Artist(layout).render()
+    assert 'fill="#ffffff"' in svg
+    assert 'filter="url(#rough)"' not in svg and 'url(#paper)' not in svg
+    assert "font-family:'Architects Daughter'" in svg
+    assert "PAUL SAMWELL-SMITH" in svg  # architect's capitals throughout
+
+
+def test_optional_extras(layout):
+    svg = Artist(dict(layout, timeline=True), hand_drawn=True, aged_paper=True).render()
+    assert 'filter="url(#rough)"' in svg and 'url(#paper)' in svg and ">1965<" in svg

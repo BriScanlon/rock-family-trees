@@ -3,15 +3,14 @@
 @tailwind utilities;
 
 :root {
-  --color-background: #efe7d3;
-  --color-paper: #f7f1e1;
-  --color-text-primary: #1d1a16;
-  --color-text-secondary: #5f574b;
-  --color-accent: #1d1a16;
-  --color-accent-hover: #3b352d;
-  --color-border: #1d1a16;
-  --font-serif: 'Rye', Georgia, serif;
-  --font-marker: 'Permanent Marker', 'Comic Sans MS', cursive;
+  /* Pete Frame: black ink, white paper, architect's capitals */
+  --color-background: #ececec;
+  --color-paper: #ffffff;
+  --color-text-primary: #000000;
+  --color-text-secondary: #444444;
+  --color-accent: #000000;
+  --color-accent-hover: #333333;
+  --color-border: #000000;
   --font-sans: 'Architects Daughter', 'Comic Sans MS', cursive;
 }
 
@@ -21,6 +20,13 @@ body {
   background-color: var(--color-background);
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
+}
+
+.font-serif, .font-marker {
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  -webkit-text-stroke: 0.6px currentColor;
+  letter-spacing: 0.04em;
 }
 
 @layer components {

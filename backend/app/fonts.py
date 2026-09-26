@@ -10,13 +10,10 @@ FONT_DIR = os.path.join(os.path.dirname(__file__), "assets", "fonts")
 FAMILIES = {
     "Architects Daughter": ["architects-daughter-latin-400-normal.woff2",
                             "architects-daughter-latin-ext-400-normal.woff2"],
-    "Permanent Marker": ["permanent-marker-latin-400-normal.woff2"],
-    "Rye": ["rye-latin-400-normal.woff2", "rye-latin-ext-400-normal.woff2"],
 }
 
+# Pete Frame lettered everything in neat architect's capitals; one hand does it all.
 HAND = "Architects Daughter"
-MARKER = "Permanent Marker"
-POSTER = "Rye"
 
 
 class _Metrics:

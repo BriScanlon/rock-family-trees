@@ -1,8 +1,6 @@
-Fonts bundled so generated SVGs are self-contained (sourced from the @fontsource npm packages).
+Font bundled so generated SVGs are self-contained (sourced from the @fontsource npm packages).
 
 - Architects Daughter — Copyright (c) 2010, Kimberly Geswein. SIL Open Font License 1.1.
-- Rye — Copyright (c) 2012, Sorkin Type Co, Reserved Font Name 'Rye'. SIL Open Font License 1.1.
-- Permanent Marker — Copyright Font Diner. Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 
 SIL Open Font License 1.1 text follows.
 

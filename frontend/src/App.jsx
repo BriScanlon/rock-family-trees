@@ -31,7 +31,7 @@ export default function App() {
 
   const [options, setOptions] = useState({
     depth: 2, max_bands: 24, title: '', paper: 'A1',
-    hand_drawn: true, coloured_lines: false, refresh: false,
+    hand_drawn: false, aged_paper: false, timeline: false, coloured_lines: false, refresh: false,
   })
   const [job, setJob] = useState(null) // latest status payload
   const [error, setError] = useState(null)
@@ -217,7 +217,10 @@ export default function App() {
                 <option value="none">Fit to content</option>
               </select>
             </label>
-            <Toggle label="Hand-drawn wobble" checked={options.hand_drawn} onChange={(v) => setOption('hand_drawn', v)} />
+            <p className="text-xs text-text-secondary">Defaults match Pete Frame's originals: black ink on white, ruled lines.</p>
+            <Toggle label="Ink wobble on lines" checked={options.hand_drawn} onChange={(v) => setOption('hand_drawn', v)} />
+            <Toggle label="Aged paper" checked={options.aged_paper} onChange={(v) => setOption('aged_paper', v)} />
+            <Toggle label="Year scale down the sides" checked={options.timeline} onChange={(v) => setOption('timeline', v)} />
             <Toggle label="Colour each musician's lines" checked={options.coloured_lines} onChange={(v) => setOption('coloured_lines', v)} />
             <Toggle label="Ignore cache (re-fetch from MusicBrainz)" checked={options.refresh} onChange={(v) => setOption('refresh', v)} />
           </section>

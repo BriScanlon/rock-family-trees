@@ -15,7 +15,8 @@ ARTIFACT_DIR = os.getenv("ARTIFACT_DIR", "artifacts")
 class Options(dict):
     DEFAULTS = {
         "depth": 2, "max_bands": 24, "title": None, "subtitle": None, "paper": "A1",
-        "hand_drawn": True, "coloured_lines": False, "refresh": False,
+        "hand_drawn": False, "coloured_lines": False, "aged_paper": False, "timeline": False,
+        "refresh": False,
     }
 
     def __init__(self, **kw):
@@ -51,11 +52,12 @@ def generate(artist_id, job_id, options=None, progress=None):
     if subtitle is None:
         years = [b.start for b in tree.bands.values()] + [b.end for b in tree.bands.values()]
         subtitle = f"{len(tree.bands)} bands · {int(min(years))} – {int(max(years))}"
-    layout = Cartographer(tree, paper=opts["paper"], subtitle=subtitle).layout()
+    layout = Cartographer(tree, paper=opts["paper"], subtitle=subtitle, timeline=opts["timeline"]).layout()
 
     progress(92, "Inking the lines")
     svg_path = os.path.join(ARTIFACT_DIR, f"{job_id}.svg")
-    Artist(layout, svg_path, hand_drawn=opts["hand_drawn"], coloured_lines=opts["coloured_lines"]).save()
+    Artist(layout, svg_path, hand_drawn=opts["hand_drawn"], coloured_lines=opts["coloured_lines"],
+           aged_paper=opts["aged_paper"]).save()
     with open(os.path.join(ARTIFACT_DIR, f"{job_id}.json"), "w") as f:
         json.dump({"tree": tree.model_dump(), "stats": layout["stats"]}, f)
 
