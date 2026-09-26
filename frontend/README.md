@@ -10,6 +10,8 @@ An interactive web interface for the Rock Family Tree Generator, built with Reac
 *   **Icons**: Lucide React
 *   **HTTP Client**: Axios
 
+The app calls the API at `/api`, which the Vite dev server proxies to `BACKEND_URL` (default `http://localhost:8000`). Set `VITE_API_BASE` to call a backend elsewhere.
+
 ## 🚀 Getting Started
 
 1.  Navigate to the `frontend` directory:

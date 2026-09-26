@@ -1,137 +1,101 @@
-from neo4j import GraphDatabase
-import os
-from datetime import datetime
+"""Neo4j-backed cache of normalised MusicBrainz artist records.
 
-class Neo4jClient:
-    def __init__(self):
-        uri = os.getenv("NEO4J_URI", "bolt://rftg-neo4j:7687")
-        user = os.getenv("NEO4J_USER", "neo4j")
-        password = os.getenv("NEO4J_PASSWORD", "password_placeholder")
+Schema:
+    (:Band   {mbid, name, type, disambiguation, begin, end, ended, fetched_at})
+    (:Artist {mbid, name, type, disambiguation, begin, end, ended, fetched_at})
+    (:Artist)-[:MEMBER_OF {key, begin, end, ended, attributes}]->(:Band)
+
+A node with `fetched_at` set has had its full relation list stored, so it can be
+served from the graph without calling MusicBrainz. MEMBER_OF is keyed on the
+stint dates so people who leave and rejoin keep every stint.
+"""
+import os
+import time
+
+from neo4j import GraphDatabase
+
+from app.musicbrainz import is_group
+
+
+class Neo4jStore:
+    name = "neo4j"
+
+    def __init__(self, uri=None, user=None, password=None, connect_timeout=30):
+        uri = uri or os.getenv("NEO4J_URI", "bolt://rftg-neo4j:7687")
+        user = user or os.getenv("NEO4J_USER", "neo4j")
+        password = password or os.getenv("NEO4J_PASSWORD", "password_placeholder")
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        deadline = time.time() + connect_timeout
+        while True:
+            try:
+                self.driver.verify_connectivity()
+                break
+            except Exception:
+                if time.time() > deadline:
+                    self.driver.close()
+                    raise
+                time.sleep(2)
+        with self.driver.session() as s:
+            s.run("CREATE CONSTRAINT band_mbid IF NOT EXISTS FOR (b:Band) REQUIRE b.mbid IS UNIQUE")
+            s.run("CREATE CONSTRAINT artist_mbid IF NOT EXISTS FOR (a:Artist) REQUIRE a.mbid IS UNIQUE")
 
     def close(self):
         self.driver.close()
 
-    def upsert_band(self, mbid, name, start_year=None, end_year=None):
-        with self.driver.session() as session:
-            session.execute_write(self._upsert_band_tx, mbid, name, start_year, end_year)
+    def put(self, record):
+        with self.driver.session() as s:
+            s.execute_write(self._put_tx, record)
 
     @staticmethod
-    def _upsert_band_tx(tx, mbid, name, start_year, end_year):
-        query = (
-            "MERGE (b:Band {mbid: $mbid}) "
-            "SET b.name = $name, b.start_year = $start_year, b.end_year = $end_year, b.last_updated = datetime() "
-            "RETURN b"
+    def _put_tx(tx, record):
+        label = "Band" if is_group(record) else "Artist"
+        tx.run(
+            f"MERGE (n:{label} {{mbid: $mbid}}) "
+            "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
+            "n.begin = $begin, n.end = $end, n.ended = $ended, n.fetched_at = datetime()",
+            mbid=record["mbid"], name=record["name"], type=record.get("type"),
+            disambiguation=record.get("disambiguation"), begin=record.get("begin"),
+            end=record.get("end"), ended=record.get("ended", False),
         )
-        tx.run(query, mbid=mbid, name=name, start_year=start_year, end_year=end_year)
+        for m in record.get("memberships", []):
+            tx.run(
+                "MERGE (a:Artist {mbid: $pid}) ON CREATE SET a.name = $pname "
+                "MERGE (b:Band {mbid: $bid}) ON CREATE SET b.name = $bname "
+                "MERGE (a)-[r:MEMBER_OF {key: $key}]->(b) "
+                "SET r.begin = $begin, r.end = $end, r.ended = $ended, r.attributes = $attrs",
+                pid=m["person_id"], pname=m["person_name"], bid=m["band_id"], bname=m["band_name"],
+                key=f"{m.get('begin') or ''}|{m.get('end') or ''}",
+                begin=m.get("begin"), end=m.get("end"), ended=m.get("ended", False),
+                attrs=m.get("attributes") or [],
+            )
 
-    def upsert_membership(self, artist_mbid, artist_name, band_mbid, rel_data):
-        with self.driver.session() as session:
-            session.execute_write(self._upsert_membership_tx, artist_mbid, artist_name, band_mbid, rel_data)
-
-    @staticmethod
-    def _upsert_membership_tx(tx, artist_mbid, artist_name, band_mbid, rel_data):
-        query = (
-            "MERGE (a:Artist {mbid: $artist_mbid}) "
-            "SET a.name = $artist_name "
-            "WITH a "
-            "MATCH (b:Band {mbid: $band_mbid}) "
-            "MERGE (a)-[r:MEMBER_OF]->(b) "
-            "SET r.role = $role, r.start_year = $start_year, r.end_year = $end_year, r.position = $position "
-            "RETURN r"
-        )
-        tx.run(query, 
-               artist_mbid=artist_mbid, artist_name=artist_name, 
-               band_mbid=band_mbid, 
-               role=rel_data.get('role'),
-               start_year=rel_data.get('start_year'),
-               end_year=rel_data.get('end_year'),
-               position=rel_data.get('position'))
-
-    def set_explored_depth(self, mbid, depth):
-        with self.driver.session() as session:
-            session.execute_write(self._set_depth_tx, mbid, depth)
+    def get(self, mbid):
+        with self.driver.session() as s:
+            return s.execute_read(self._get_tx, mbid)
 
     @staticmethod
-    def _set_depth_tx(tx, mbid, depth):
-        # Only update if the new depth is greater than existing
-        query = (
-            "MATCH (b:Band {mbid: $mbid}) "
-            "SET b.explored_depth = CASE WHEN b.explored_depth IS NULL OR b.explored_depth < $depth THEN $depth ELSE b.explored_depth END "
-            "RETURN b"
-        )
-        tx.run(query, mbid=mbid, depth=depth)
-
-    def get_explored_depth(self, mbid):
-        with self.driver.session() as session:
-            result = session.execute_read(self._get_depth_tx, mbid)
-            return result if result is not None else -1
-
-    @staticmethod
-    def _get_depth_tx(tx, mbid):
-        query = "MATCH (b:Band {mbid: $mbid}) RETURN b.explored_depth AS depth"
-        result = tx.run(query, mbid=mbid).single()
-        return result["depth"] if result else None
-
-    def get_subgraph(self, mbid, depth):
-        """
-        Returns a structured representation of the band and its members 
-        up to a certain depth of relationships.
-        """
-        with self.driver.session() as session:
-            return session.execute_read(self._get_subgraph_tx, mbid, depth)
-
-    @staticmethod
-    def _get_subgraph_tx(tx, mbid, depth):
-        # Query to get bands and their members in the neighborhood
-        # max_hops must be a literal in Cypher (cannot be a parameter)
-        max_hops = depth * 2
-        query = (
-            "MATCH (root:Band {mbid: $mbid}) "
-            f"MATCH path = (root)-[:MEMBER_OF*0..{max_hops}]-(target) "
-            "WITH nodes(path) AS nodes, relationships(path) AS rels "
-            "UNWIND nodes AS n "
-            "UNWIND rels AS r "
-            "RETURN DISTINCT n, r"
-        )
-        result = tx.run(query, mbid=mbid)
-        
-        bands = {}
-        for record in result:
-            node = record["n"]
-            rel = record["r"]
-            
-            if "Band" in node.labels:
-                b_id = node["mbid"]
-                if b_id not in bands:
-                    bands[b_id] = {
-                        "id": b_id,
-                        "name": node.get("name"),
-                        "start_year": node.get("start_year"),
-                        "end_year": node.get("end_year"),
-                        "all_members": []
-                    }
-            
-            if rel and rel.type == "MEMBER_OF":
-                # Check if it's a relationship to one of our bands
-                artist = rel.start_node
-                band = rel.end_node
-                b_id = band["mbid"]
-                
-                a_id = artist.get("mbid")
-                a_name = artist.get("name")
-
-                if b_id in bands and a_id and a_name:
-                    member_data = {
-                        "artist_id": a_id,
-                        "artist_name": a_name,
-                        "role": rel.get("role"),
-                        "start_year": rel.get("start_year"),
-                        "end_year": rel.get("end_year"),
-                        "position": rel.get("position")
-                    }
-                    # Avoid duplicates
-                    if not any(m["artist_id"] == member_data["artist_id"] and m["start_year"] == member_data["start_year"] for m in bands[b_id]["all_members"]):
-                        bands[b_id]["all_members"].append(member_data)
-        
-        return {"bands": bands}
+    def _get_tx(tx, mbid):
+        row = tx.run(
+            "CALL { MATCH (n:Band {mbid: $mbid}) RETURN n UNION MATCH (n:Artist {mbid: $mbid}) RETURN n } "
+            "WITH n WHERE n.fetched_at IS NOT NULL "
+            "OPTIONAL MATCH (n)-[r:MEMBER_OF]-() "
+            "WITH n, r, startNode(r) AS a, endNode(r) AS b "
+            "RETURN n, collect(CASE WHEN r IS NULL THEN null ELSE {pid: a.mbid, pname: a.name, "
+            "bid: b.mbid, bname: b.name, begin: r.begin, end: r.end, ended: r.ended, "
+            "attributes: r.attributes} END) AS rels LIMIT 1",
+            mbid=mbid,
+        ).single()
+        if not row:
+            return None
+        n = row["n"]
+        return {
+            "mbid": n["mbid"], "name": n.get("name"), "type": n.get("type"),
+            "disambiguation": n.get("disambiguation") or "",
+            "begin": n.get("begin"), "end": n.get("end"), "ended": bool(n.get("ended")),
+            "memberships": [
+                {"person_id": r["pid"], "person_name": r["pname"], "band_id": r["bid"],
+                 "band_name": r["bname"], "begin": r["begin"], "end": r["end"],
+                 "ended": bool(r["ended"]), "attributes": list(r["attributes"] or [])}
+                for r in row["rels"] if r["pid"] and r["bid"]
+            ],
+        }

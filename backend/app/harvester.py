@@ -1,148 +1,121 @@
-import musicbrainzngs
-import os
-import time
-import random
-from app.graph_db import Neo4jClient
+"""Collects the artist records needed to draw a family tree.
+
+Depth is counted in *band generations*:
+  depth 1  the root band(s) only (plus their members, for dates of death)
+  depth 2  + every other band those members played in
+  depth 3  + the members of those bands and *their* other bands, etc.
+
+Every record is served from the store when cached; only misses hit
+MusicBrainz. A fetch budget keeps deep trees from exploding.
+"""
+from collections import Counter
+
+from app.musicbrainz import MusicBrainzClient, is_group
+
 
 class Harvester:
-    def __init__(self):
-        musicbrainzngs.set_useragent(
-            os.getenv("MB_USER_AGENT", "RockFamilyTreeGen/1.2.1"),
-            "1.2.1",
-            "briscanlon@gmail.com"
-        )
-        self.last_call = 0
-        self.db = Neo4jClient()
+    def __init__(self, store=None, client=None, refresh=False):
+        if store is None:
+            from app.store import get_store
+            store = get_store()
+        self.store = store
+        self.client = client
+        self.refresh = refresh
+        self.records = {}
+        self.api_calls = 0
 
-    def _wait_for_rate_limit(self):
-        elapsed = time.time() - self.last_call
-        if elapsed < 1.1:
-            time.sleep(1.1 - elapsed)
-        self.last_call = time.time()
-
-    def _safe_call(self, func, *args, **kwargs):
-        max_retries = 3
-        for i in range(max_retries):
-            try:
-                self._wait_for_rate_limit()
-                return func(*args, **kwargs)
-            except Exception as e:
-                if "503" in str(e) or "429" in str(e):
-                    wait = (i + 1) * 2 + random.random()
-                    print(f"Rate limited by MusicBrainz. Retrying in {wait:.1f}s...")
-                    time.sleep(wait)
-                    continue
-                raise e
-        return None
+    def _client(self):
+        if self.client is None:
+            self.client = MusicBrainzClient()
+        return self.client
 
     def search_artists(self, query):
-        try:
-            result = self._safe_call(musicbrainzngs.search_artists, artist=query)
-            if not result: return []
-            
-            artists = []
-            for artist in result.get('artist-list', []):
-                artists.append({
-                    "id": artist['id'], "name": artist['name'],
-                    "type": artist.get('type'), "disambiguation": artist.get('disambiguation')
-                })
-            return artists
-        except Exception as e:
-            print(f"Search failed: {e}")
-            return []
+        return self._client().search_artists(query)
 
-    def sync_artist_to_neo4j(self, mbid):
-        """Fetches data from MB and writes it to Neo4j"""
-        try:
-            print(f"--> Syncing MBID to Neo4j: {mbid}")
-            result = self._safe_call(
-                musicbrainzngs.get_artist_by_id, mbid, 
-                includes=["artist-rels"]
-            )
-            if not result: return
-            
-            artist_data = result.get('artist', {})
-            name = artist_data.get('name')
-            is_group = artist_data.get('type') == 'Group'
-            
-            if is_group:
-                ls = artist_data.get('life-span', {})
-                start = self._parse_year(ls.get('begin'))
-                end = self._parse_year(ls.get('end'))
-                self.db.upsert_band(mbid, name, start, end)
-                
-                # Members
-                rels = artist_data.get('artist-relation-list', [])
-                for idx, rel in enumerate(rels):
-                    if rel.get('type') == 'member of band':
-                        target = rel.get('artist', {})
-                        m_id, m_name = target.get('id'), target.get('name')
-                        
-                        membership = {
-                            "role": self._parse_role(rel.get('attributes', [])),
-                            "start_year": self._parse_year(rel.get('begin')),
-                            "end_year": self._parse_year(rel.get('end')),
-                            "position": idx
-                        }
-                        self.db.upsert_membership(m_id, m_name, mbid, membership)
-            else:
-                # Individual artist - we just upsert them (memberships will link them to bands)
-                # Note: In a real recursion, we might want to find bands this artist is in.
-                # But here we focus on Group-down recursion.
-                pass
-                
-        except Exception as e:
-            print(f"!!! Error syncing {mbid}: {e}")
+    def fetch(self, mbid):
+        if mbid in self.records:
+            return self.records[mbid]
+        record = None if self.refresh else self.store.get(mbid)
+        if record is None:
+            self.api_calls += 1
+            record = self._client().get_artist(mbid)
+            if record is None:
+                return None
+            self.store.put(record)
+        self.records[mbid] = record
+        return record
 
-    def fetch_recursive(self, mbid, max_depth=2):
-        """
-        Depth-aware recursive harvest.
-        1. Check Neo4j for explored_depth.
-        2. If too shallow, expand.
-        """
-        current_explored = self.db.get_explored_depth(mbid)
-        
-        if current_explored < max_depth:
-            print(f"Cache miss or shallow (depth {current_explored} < {max_depth}). Expanding...")
-            self._expand_recursive(mbid, max_depth)
-            self.db.set_explored_depth(mbid, max_depth)
+    def harvest(self, root_id, depth=2, max_bands=30, max_people=120, progress=None):
+        progress = progress or (lambda frac, msg: None)
+        depth = max(1, int(depth))
+        band_budget = max(max_bands * 2, 8)
+
+        root = self.fetch(root_id)
+        if root is None:
+            raise ValueError(f"Artist {root_id} not found on MusicBrainz")
+
+        if is_group(root):
+            root_bands = [root_id]
         else:
-            print(f"Cache hit (depth {current_explored} >= {max_depth}).")
+            # A person: their bands form the first generation.
+            root_bands = list(dict.fromkeys(m["band_id"] for m in root["memberships"] if m["person_id"] == root_id))
+            if not root_bands:
+                raise ValueError(f"{root['name']} is not recorded as a member of any band")
 
-        # Always return the subgraph from Neo4j
-        return self.db.get_subgraph(mbid, max_depth)
+        levels = {b: 0 for b in root_bands}
+        frontier = root_bands[:band_budget]
+        seen_people = {root_id} if not is_group(root) else set()
+        bands_fetched = 0
 
-    def _expand_recursive(self, mbid, max_depth):
-        visited = set()
-        queue = [(mbid, 0)]
-        
-        while queue:
-            curr_mbid, depth = queue.pop(0)
-            if curr_mbid in visited: continue
-            visited.add(curr_mbid)
-            
-            # Sync this node to Neo4j
-            self.sync_artist_to_neo4j(curr_mbid)
-            
-            if depth < max_depth:
-                # To find neighbors, we look at what we just put in Neo4j 
-                # or we can extract them from the MB response.
-                # Let's use the MB response for simplicity during sync.
-                result = self._safe_call(musicbrainzngs.get_artist_by_id, curr_mbid, includes=["artist-rels"])
-                if not result: continue
-                
-                rels = result.get('artist', {}).get('artist-relation-list', [])
-                for rel in rels:
-                    if rel.get('type') == 'member of band':
-                        target_id = rel.get('artist', {}).get('id')
-                        if target_id and target_id not in visited:
-                            queue.append((target_id, depth + 1))
+        for level in range(depth):
+            # 1. Fetch the bands in this generation (full lineups)
+            fetched = []
+            for i, band_id in enumerate(frontier):
+                if bands_fetched >= band_budget:
+                    break
+                progress(0.1 + 0.8 * (level + i / max(len(frontier), 1)) / depth,
+                         f"Reading band {bands_fetched + 1}: generation {level + 1}")
+                rec = self.fetch(band_id)
+                bands_fetched += 1
+                if rec is not None:
+                    fetched.append(rec)
 
-    def _parse_year(self, date_str):
-        if not date_str or len(date_str) < 4: return None
-        try: return int(date_str[:4])
-        except: return None
+            last_level = level == depth - 1
+            if last_level and level > 0:
+                break
 
-    def _parse_role(self, attributes):
-        parts = [a if isinstance(a, str) else a.get('attribute', '') for a in attributes]
-        return ", ".join(filter(None, parts)) if parts else None
+            # 2. Fetch their members (death dates, and other bands for the next generation)
+            people = []
+            for rec in fetched:
+                for m in rec["memberships"]:
+                    if m["band_id"] == rec["mbid"] and m["person_id"] not in seen_people:
+                        seen_people.add(m["person_id"])
+                        people.append(m["person_id"])
+            people = people[:max(0, max_people - len(seen_people) + len(people))]
+
+            links = Counter()
+            for i, pid in enumerate(people):
+                progress(0.1 + 0.8 * (level + 0.5 + 0.5 * i / max(len(people), 1)) / depth,
+                         f"Tracing member {i + 1} of {len(people)}")
+                prec = self.fetch(pid)
+                if prec is None:
+                    continue
+                for m in prec["memberships"]:
+                    if m["person_id"] == pid and m["band_id"] not in levels:
+                        links[m["band_id"]] += 1
+
+            if last_level:
+                break
+            # Most-connected bands first so the budget goes where it matters.
+            frontier = [b for b, _ in links.most_common()]
+            for b in frontier:
+                levels[b] = level + 1
+
+        return {
+            "root_id": root_id,
+            "root_name": root["name"],
+            "root_bands": root_bands,
+            "band_levels": levels,
+            "records": self.records,
+            "api_calls": self.api_calls,
+        }

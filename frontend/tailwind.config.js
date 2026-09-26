@@ -1,13 +1,11 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
         background: 'var(--color-background)',
+        paper: 'var(--color-paper)',
         'text-primary': 'var(--color-text-primary)',
         'text-secondary': 'var(--color-text-secondary)',
         accent: 'var(--color-accent)',
@@ -15,8 +13,9 @@ export default {
         border: 'var(--color-border)',
       },
       fontFamily: {
-        serif: ['var(--font-serif)', 'serif'],
-        sans: ['var(--font-sans)', 'sans-serif'],
+        serif: ['var(--font-serif)'],
+        marker: ['var(--font-marker)'],
+        sans: ['var(--font-sans)'],
       },
     },
   },

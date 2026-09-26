@@ -1,70 +1,82 @@
 # Rock Family Tree Generator (RFTG)
 
-Procedurally generate high-fidelity, A1-printable "Rock Family Tree" posters. This application visualizes the connections between bands and their members, showing lineups, membership changes, and migrations between bands over time.
+Generate printable "Rock Family Tree" posters in the style of Pete Frame's hand-drawn classics: every line-up of every band as a numbered box, time running down the page, thick lines joining a band's line-ups, and thin lines following each musician as they leave to form or join the next band. Handwritten-style notes say who left, who died and when bands split.
 
-## 🏗 Architecture
+| Whole poster (offline demo) | Detail |
+| --- | --- |
+| ![The Yardbirds family tree](docs/demo-poster.jpg) | ![Detail](docs/demo-detail.jpg) |
 
-The application follows a microservices architecture orchestrated by Docker Compose:
+Data comes from [MusicBrainz](https://musicbrainz.org) ("member of band" relationships and their dates).
 
-*   **Frontend**: A React application (Vite + Tailwind CSS) providing an interactive UI for searching bands, configuring generation parameters, and viewing/downloading the generated trees.
-*   **Backend**: A FastAPI application that handles API requests, serves the frontend (if configured), and manages the generation process.
-*   **Worker**: A Celery worker that performs the heavy lifting:
-    1.  **Harvest**: Fetches data from MusicBrainz and syncs it to a Neo4j graph database.
-    2.  **Refine**: Processes the raw graph data.
-    3.  **Cartographer**: Calculates the layout (timeline, positioning) for the family tree.
-    4.  **Artist**: Renders the final SVG poster.
-*   **Message Broker**: RabbitMQ (`rftg-rabbitmq`) for managing the task queue between the backend and worker.
-*   **Database**: Neo4j (`rftg-neo4j`) for storing the complex relationships between artists and bands.
+## Getting started
 
-## 🚀 Getting Started
+### Everything in Docker
 
-### Prerequisites
+```bash
+docker compose up --build
+```
 
-*   Docker
-*   Docker Compose
+* App: http://localhost:3000
+* API: http://localhost:8000 (docs at `/docs`)
+* Neo4j browser: http://localhost:7474 · RabbitMQ: http://localhost:15672
 
-### Installation & Running
+Settings have sensible defaults; copy `sample.env` to `.env` to change them (at least set `MB_USER_AGENT` to include your contact details, which MusicBrainz asks for, and change `NEO4J_PASSWORD`).
 
-1.  Clone the repository.
-2.  Create a `.env` file based on `sample.env` (if available) or ensure the defaults in `docker-compose.yml` are sufficient.
-3.  Start the services:
+### Without any infrastructure
 
-    ```bash
-    docker-compose up --build
-    ```
+No RabbitMQ or Neo4j needed: jobs run inside the API process and MusicBrainz responses are cached as JSON files.
 
-4.  Access the application:
-    *   **Frontend**: `http://localhost:5173` (default port, check `docker-compose.yml`)
-    *   **Backend API**: `http://localhost:8000`
-    *   **Neo4j Browser**: `http://localhost:7474`
-    *   **RabbitMQ Management**: `http://localhost:15672`
+```bash
+cd backend && pip install -r requirements.txt && uvicorn main:app --port 8000
+cd frontend && npm install && npm run dev        # http://localhost:3000
+```
 
-## 📂 Project Structure
+### Offline demo
 
-*   `backend/`: Python backend and worker code.
-    *   `main.py`: FastAPI entry point.
-    *   `app/`: Core logic modules.
-        *   `harvester.py`: MusicBrainz data fetching and Neo4j syncing.
-        *   `worker.py`: Celery task definitions.
-        *   `artist.py`: SVG rendering logic.
-        *   `cartographer.py`: Graph layout and positioning.
-        *   `graph_db.py`: Neo4j interaction layer.
-*   `frontend/`: React frontend code.
-    *   `src/`: Components and application logic.
-*   `docker-compose.yml`: Service orchestration configuration.
+Search for "yardbirds" (or click *Try the offline demo*) to draw the Yardbirds family — Cream, Led Zeppelin, Fleetwood Mac, Faces and more — from built-in data. It needs no network access. The dates are approximate.
 
-## 🔌 API Endpoints
+## How it works
 
-*   `GET /search?q={query}`: Search for an artist/band by name.
-*   `POST /generate`: Start a background job to generate a family tree.
-    *   Body: `{"artist_id": "mbid", "depth": 2}`
-*   `GET /status/{job_id}`: Check the status of a generation job.
-*   `GET /download/{job_id}`: Download the generated SVG artifact.
+```
+search ─► harvester ─► refiner ─► cartographer ─► artist ─► SVG
+          (MusicBrainz   (line-ups,   (Frame-style    (hand-lettered,
+           + cache)       notes)       layout)         self-contained)
+```
 
-## ✨ Features
+| Module | Job |
+| --- | --- |
+| `app/musicbrainz.py` | JSON web-service client (rate limited to 1 req/s, retries) that normalises artists into cacheable records |
+| `app/store.py`, `app/graph_db.py` | Record cache: Neo4j when configured and reachable, otherwise JSON files |
+| `app/harvester.py` | Follows band → members → their other bands for *depth* generations, within a fetch budget |
+| `app/refiner.py` | Parses dates, splits each band's history into numbered line-ups, abbreviates instruments Frame-style (vcls, gtr, bs, drms, kybds…), picks the most connected bands |
+| `app/cartographer.py` | Layout: time-proportional rows, lanes that put related bands side by side and are reused when bands end, zig-zagging for long-running bands, line routing through the gutters, notes, year scale, paper sizing (A0–A4) |
+| `app/artist.py` | Renders the SVG with embedded fonts, so the file looks the same everywhere and prints at any size |
+| `app/jobs.py`, `app/worker.py` | Job progress (shared JSON files) and the Celery task |
 
-*   **Interactive Search**: Find bands using the MusicBrainz database.
-*   **Configurable Depth**: Control how deep the recursive search for band members and connections goes.
-*   **Visual Feedback**: Real-time progress updates during the generation process.
-*   **High-Quality Output**: Generates A1-sized SVG posters suitable for printing.
-*   **Caching**: Utilizes Neo4j to cache artist data, reducing external API calls on subsequent runs.
+### Options (`POST /generate`)
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `artist_id` | — | MusicBrainz ID of a band or musician (or `demo:yardbirds`) |
+| `depth` | 2 | 1 = just the band, 2 = plus members' other bands, 3–4 = further out |
+| `max_bands` | 24 | Cap on bands drawn; the most connected are kept |
+| `title`, `subtitle` | auto | Poster heading |
+| `paper` | `A1` | `A0`–`A4` (portrait or landscape chosen automatically) or `none` |
+| `hand_drawn` | true | Slight ink wobble on lines and boxes |
+| `coloured_lines` | false | Give each musician's lines their own colour |
+| `refresh` | false | Ignore the cache and re-fetch from MusicBrainz |
+
+Other endpoints: `GET /search?q=`, `GET /samples`, `GET /status/{job_id}`, `GET /download/{job_id}` (SVG), `GET /tree/{job_id}` (the tree data as JSON). Everything is also served under `/api/…`.
+
+## Development
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest                                   # unit, layout and API tests (no network needed)
+python tests/live_smoke.py               # against a running stack with MusicBrainz access
+```
+
+Bundled fonts (Architects Daughter, Permanent Marker, Rye) are open-licensed; see `backend/app/assets/fonts/LICENSE.txt`.
+
+This project is a homage: *Rock Family Trees* are the work of Pete Frame.

@@ -1,119 +1,146 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import uuid
 import os
-from app.harvester import Harvester
-from app.worker import process_tree
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional
 
-from dotenv import load_dotenv
 import uvicorn
+from dotenv import load_dotenv
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
 load_dotenv()
-app = FastAPI(title="Rock Family Tree Generator API", version="1.2.1")
 
-# Initialize harvester
-harvester = Harvester()
+from app import jobs  # noqa: E402
+from app.fixtures import SAMPLES, search_samples  # noqa: E402
+from app.musicbrainz import MusicBrainzClient  # noqa: E402
+from app.pipeline import ARTIFACT_DIR  # noqa: E402
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# "celery" hands jobs to the RabbitMQ worker; "inline" runs them in this process
+# so the app works with nothing but `uvicorn main:app`.
+TASK_MODE = os.getenv("TASK_MODE", "celery" if os.getenv("RABBITMQ_URL") else "inline")
+_executor = ThreadPoolExecutor(max_workers=int(os.getenv("INLINE_WORKERS", "2")))
+
+app = FastAPI(title="Rock Family Tree Generator API", version="2.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+api = APIRouter()
+
 
 class SearchResult(BaseModel):
     id: str
     name: str
     type: Optional[str] = None
     disambiguation: Optional[str] = None
+    country: Optional[str] = None
+    years: Optional[str] = None
 
-@app.get("/ping")
-def ping():
-    return {"status": "ok"}
 
 class GenerationRequest(BaseModel):
     artist_id: str
-    depth: int = 2
-    detail_level: int = 5
+    depth: int = Field(2, ge=1, le=4)
+    max_bands: int = Field(24, ge=1, le=60)
+    title: Optional[str] = Field(None, max_length=120)
+    subtitle: Optional[str] = Field(None, max_length=200)
+    paper: str = Field("A1", pattern="^(A0|A1|A2|A3|A4|none)$")
+    hand_drawn: bool = True
+    coloured_lines: bool = False
+    refresh: bool = False
+    detail_level: Optional[int] = None  # accepted for backwards compatibility; unused
+
 
 class JobStatus(BaseModel):
     job_id: str
     status: str
     progress: int
+    message: Optional[str] = None
     result_url: Optional[str] = None
+    title: Optional[str] = None
+    stats: Optional[dict] = None
 
-# Remove mock database for jobs
-# In production, use Redis or a database
-# jobs = {}
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Rock Family Tree Generator API"}
+@api.get("/ping")
+def ping():
+    return {"status": "ok", "task_mode": TASK_MODE}
 
-@app.get("/search", response_model=List[SearchResult])
-async def search_artist(q: str):
-    print(f"Search request received for: {q}")
-    try:
-        results = harvester.search_artists(q)
-        print(f"Found {len(results)} results")
-        return results
-    except Exception as e:
-        print(f"Search error: {e}")
+
+@api.get("/samples")
+def samples():
+    return [{"id": s["id"], "name": s["name"], "description": s["description"],
+             "default_depth": s["default_depth"]} for s in SAMPLES.values()]
+
+
+@api.get("/search", response_model=List[SearchResult])
+def search_artist(q: str):
+    q = q.strip()
+    if not q:
         return []
-
-@app.get("/search/", response_model=List[SearchResult], include_in_schema=False)
-async def search_artist_slash(q: str):
-    return await search_artist(q)
-
-@app.post("/generate", response_model=JobStatus)
-async def generate_tree(request: GenerationRequest):
-    task = process_tree.delay(None, request.artist_id, request.depth)
-    return {"job_id": task.id, "status": "Processing", "progress": 0}
-
-@app.get("/status/{job_id}", response_model=JobStatus)
-async def get_status(job_id: str):
+    results = search_samples(q)
     try:
-        task = process_tree.AsyncResult(job_id)
-        # Checking .state can raise ValueError if metadata is corrupted
-        try:
-            state = task.state
-        except (ValueError, KeyError) as e:
-            print(f"Metadata error for task {job_id}: {e}")
-            return {"job_id": job_id, "status": "Error", "progress": 0}
+        results += MusicBrainzClient().search_artists(q)
+    except Exception as e:  # network down, rate limited, etc.
+        print(f"Search error: {e}")
+        if not results:
+            return JSONResponse(status_code=502, content={"detail": f"MusicBrainz search failed: {e}"})
+    return results
 
-        if state == 'PENDING':
-            return {"job_id": job_id, "status": "Pending", "progress": 0}
-        elif task.state == 'PROGRESS':
-            progress = 0
-            if isinstance(task.info, dict):
-                progress = task.info.get('progress', 0)
-            return {"job_id": job_id, "status": "Processing", "progress": progress}
-        elif task.state == 'SUCCESS':
-            # task.result contains the return value of the task
-            result = task.result
-            if isinstance(result, dict) and result.get('status') == 'Error':
-                return {"job_id": job_id, "status": "Error", "progress": 0}
-            
-            res_url = result.get('result_url') if isinstance(result, dict) else f"/download/{job_id}"
-            return {"job_id": job_id, "status": "Completed", "progress": 100, "result_url": res_url}
-        elif task.state == 'FAILURE':
-            return {"job_id": job_id, "status": "Error", "progress": 0}
-        else:
-            return {"job_id": job_id, "status": task.state, "progress": 0}
-    except Exception as e:
-        print(f"Status check error: {e}")
-        return {"job_id": job_id, "status": "Error", "progress": 0}
 
-@app.get("/download/{job_id}")
-async def download_result(job_id: str):
-    file_path = f"artifacts/{job_id}.svg"
-    if os.path.exists(file_path):
-        from fastapi.responses import FileResponse
-        return FileResponse(file_path, media_type='image/svg+xml', filename=f"rock-tree-{job_id}.svg")
-    raise HTTPException(status_code=404, detail="Result not found")
+@api.post("/generate", response_model=JobStatus)
+def generate_tree(request: GenerationRequest):
+    job_id = uuid.uuid4().hex
+    options = request.model_dump(exclude={"artist_id", "detail_level"})
+    jobs.write_status(job_id, status="Pending", progress=0, message="Queued", artist_id=request.artist_id)
+    if TASK_MODE == "celery":
+        from app.worker import process_tree
+        process_tree.delay(job_id, request.artist_id, options)
+    else:
+        _executor.submit(jobs.run_job, job_id, request.artist_id, options)
+    return {"job_id": job_id, "status": "Pending", "progress": 0, "message": "Queued"}
+
+
+@api.get("/status/{job_id}", response_model=JobStatus)
+def get_status(job_id: str):
+    status = jobs.read_status(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    fields = {k: v for k, v in status.items() if k in JobStatus.model_fields and v is not None}
+    return JobStatus(**{**fields, "job_id": job_id})
+
+
+def _artifact(job_id, ext):
+    safe = "".join(c for c in job_id if c.isalnum() or c in "-_")
+    path = os.path.join(ARTIFACT_DIR, f"{safe}.{ext}")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Result not found")
+    return path, safe
+
+
+@api.get("/download/{job_id}")
+def download_result(job_id: str, attachment: bool = False):
+    path, safe = _artifact(job_id, "svg")
+    return FileResponse(path, media_type="image/svg+xml", filename=f"rock-family-tree-{safe}.svg",
+                        content_disposition_type="attachment" if attachment else "inline")
+
+
+@api.get("/tree/{job_id}")
+def tree_data(job_id: str):
+    path, _ = _artifact(job_id, "json")
+    return FileResponse(path, media_type="application/json")
+
+
+app.include_router(api)
+app.include_router(api, prefix="/api", include_in_schema=False)
+
+# Serve a production build of the frontend if one has been copied in.
+_static = os.getenv("FRONTEND_DIST", "static")
+if os.path.isdir(_static):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_static, html=True), name="frontend")
+else:
+    @app.get("/")
+    def read_root():
+        return {"message": "Welcome to the Rock Family Tree Generator API"}
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("BACKEND_PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("BACKEND_PORT", 8000)))

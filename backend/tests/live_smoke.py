@@ -1,9 +1,11 @@
+"""Smoke test against a running stack: python tests/live_smoke.py [http://localhost:8000]
+Needs network access to MusicBrainz, so it is not collected by pytest."""
 import requests
 import time
 import sys
 
 # Detect backend host based on environment
-backend_url = "http://localhost:8000"
+backend_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 
 def test_e2e():
     print(f"Starting E2E test against {backend_url}")
@@ -42,7 +44,7 @@ def test_e2e():
     print(f"Job started: {job_id}")
     
     # 3. Poll status
-    max_retries = 30
+    max_retries = 180  # MusicBrainz allows ~1 request per second
     for i in range(max_retries):
         status_res = requests.get(f"{backend_url}/status/{job_id}")
         data = status_res.json()
@@ -56,7 +58,7 @@ def test_e2e():
             print(f"Result URL: {data['result_url']}")
             return
         elif status == "Error":
-            print(f"FAILED: Job failed with error: {data.get('message')}")
+            print(f"FAILED: {data.get('message')}")
             sys.exit(1)
             
         time.sleep(2)

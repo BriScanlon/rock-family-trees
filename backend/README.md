@@ -1,54 +1,29 @@
 # RFTG Backend & Worker
 
-The backend services for the Rock Family Tree Generator, responsible for data harvesting, graph processing, layout calculation, and SVG rendering.
+FastAPI app (`main.py`) plus an optional Celery worker (`app/worker.py`) that research band line-ups on MusicBrainz and render Pete Frame-style family tree posters as SVG. See the top-level README for the module overview and API options.
 
-## 🏗 Architecture
+```bash
+pip install -r requirements-dev.txt
+uvicorn main:app --reload --port 8000   # TASK_MODE=inline, file cache: no other services needed
+pytest
+```
 
-The backend consists of two main components:
-1.  **FastAPI Application (`main.py`)**: Handles HTTP requests for searching bands and triggering generation jobs.
-2.  **Celery Worker (`app/worker.py`)**: Executes background tasks for fetching data and generating the family tree.
+Environment variables (all optional):
 
-### Core Modules (`app/`)
+| Variable | Default | |
+| --- | --- | --- |
+| `TASK_MODE` | `celery` if `RABBITMQ_URL` is set, else `inline` | where jobs run |
+| `RABBITMQ_URL` | — | Celery broker |
+| `GRAPH_STORE` | `neo4j` if `NEO4J_URI` is set, else `file` | record cache |
+| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | | Neo4j connection |
+| `CACHE_DIR` | `cache/artists` | file cache location |
+| `ARTIFACT_DIR` | `artifacts` | generated SVGs and job status |
+| `MB_USER_AGENT` | project URL | identify yourself to MusicBrainz |
+| `FRONTEND_DIST` | `static` | serve a built frontend from this folder, if present |
 
-*   `harvester.py`: Interacts with the MusicBrainz API to fetch artist data and syncs it to a Neo4j graph database. Implements rate limiting and recursive fetching.
-*   `refiner.py`: Processes raw graph data from Neo4j to prepare it for layout calculation.
-*   `cartographer.py`: Calculates the timeline and spatial layout of bands and members on the canvas.
-*   **`artist.py`**: Uses `svgwrite` to render the final SVG poster based on the calculated layout.
-*   `graph_db.py`: A Neo4j client wrapper for managing database interactions.
+Render the offline demo from the command line:
 
-## 🚀 Getting Started
-
-1.  Navigate to the `backend` directory:
-    ```bash
-    cd backend
-    ```
-
-2.  Create and activate a virtual environment:
-    ```bash
-    python -m venv .venv
-    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-    ```
-
-3.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  Run the API server:
-    ```bash
-    uvicorn main:app --reload
-    ```
-
-5.  Run the Celery worker (in a separate terminal):
-    ```bash
-    celery -A app.worker worker --loglevel=info
-    ```
-
-## ⚙️ Environment Variables
-
-Ensure these are set in your `.env` file or environment:
-
-*   `RABBITMQ_URL`: Connection string for RabbitMQ (e.g., `pyamqp://guest:guest@localhost//`).
-*   `BACKEND_PORT`: Port for the API server (default: `8000`).
-*   `NEO4J_AUTH`: Authentication for Neo4j (e.g., `neo4j/password`).
-*   `MB_USER_AGENT`: User agent string for MusicBrainz API requests.
+```bash
+python -c "from app.pipeline import generate; print(generate('demo:yardbirds', 'demo', {'depth': 4}))"
+# -> artifacts/demo.svg
+```

@@ -1,58 +1,63 @@
+x-backend-env: &backend-env
+  TASK_MODE: ${TASK_MODE:-celery}
+  RABBITMQ_URL: ${RABBITMQ_URL:-pyamqp://guest:guest@rftg-rabbitmq//}
+  GRAPH_STORE: ${GRAPH_STORE:-neo4j}
+  NEO4J_URI: ${NEO4J_URI:-bolt://rftg-neo4j:7687}
+  NEO4J_USER: ${NEO4J_USER:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change-me-please}
+  MB_USER_AGENT: ${MB_USER_AGENT:-RockFamilyTreeGen/2.0 ( https://github.com/BriScanlon/rock-family-trees )}
+  ARTIFACT_DIR: /data/artifacts
+  CACHE_DIR: /data/cache
+
 services:
   rftg-backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     container_name: rftg-backend
-    env_file: .env
+    environment: *backend-env
     ports:
-      - "${BACKEND_PORT}:${BACKEND_PORT}"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
-      - rftg_api_cache:/app/cache
-      - rftg_artifacts:/app/artifacts
+      - rftg_data:/data
     depends_on:
-      - rftg-rabbitmq
-      - rftg-neo4j
-    networks:
-      - rftg-net
+      rftg-rabbitmq: { condition: service_healthy }
+      rftg-neo4j: { condition: service_healthy }
+    networks: [rftg-net]
 
   rftg-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     container_name: rftg-worker
-    command: celery -A app.worker worker --loglevel=info
-    env_file: .env
+    command: celery -A app.worker worker --loglevel=info --concurrency=2
+    environment: *backend-env
     volumes:
       - ./backend:/app
-      - rftg_api_cache:/app/cache
-      - rftg_artifacts:/app/artifacts
+      - rftg_data:/data
     depends_on:
-      - rftg-rabbitmq
-      - rftg-neo4j
-    networks:
-      - rftg-net
+      rftg-rabbitmq: { condition: service_healthy }
+      rftg-neo4j: { condition: service_healthy }
+    networks: [rftg-net]
 
   rftg-frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     container_name: rftg-frontend
-    env_file: .env
+    environment:
+      BACKEND_URL: http://rftg-backend:8000
     ports:
-      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
-    networks:
-      - rftg-net
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on: [rftg-backend]
+    networks: [rftg-net]
 
   rftg-rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: rftg-rabbitmq
     ports:
-      - "5672:5672"
       - "15672:15672"
-    networks:
-      - rftg-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks: [rftg-net]
 
   rftg-neo4j:
     image: neo4j:5-community
@@ -61,17 +66,20 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password_placeholder
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-me-please}
     volumes:
       - rftg_neo4j_data:/data
-    networks:
-      - rftg-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks: [rftg-net]
 
 networks:
   rftg-net:
     driver: bridge
 
 volumes:
-  rftg_api_cache:
-  rftg_artifacts:
+  rftg_data:
   rftg_neo4j_data:
