@@ -121,7 +121,14 @@ def test_the_chart_takes_over_for_the_members_it_has():
     assert not any(m["person_id"] == "p-eve" for m in got)  # on the chart for nine days only: MusicBrainz's 1975-76 goes
     mb.append({"person_id": "p-fay", "person_name": "Fay Frost", "band_id": "b", "band_name": "Band",
                "begin": "1985", "end": "1986", "ended": True, "attributes": ["piano"]})
-    assert any(m["person_id"] == "p-fay" for m in apply_chart(mb, chart, "b", "Band"))  # not on it: MusicBrainz stands
+    assert not any(m["person_id"] == "p-fay" for m in apply_chart(mb, chart, "b", "Band"))  # in its years, not on it: not a member
+    mb.append({"person_id": "p-gus", "person_name": "Gus Gone", "band_id": "b", "band_name": "Band",
+               "begin": "1965", "end": "1968", "ended": True, "attributes": ["drums"]})
+    mb.append({"person_id": "p-kidd", "person_name": "Kid Band", "band_id": "b", "band_name": "Band",
+               "begin": "1985", "end": None, "ended": False, "attributes": ["eponymous"]})
+    kept = {m["person_id"] for m in apply_chart(mb, chart, "b", "Band")}
+    assert "p-gus" in kept   # before the chart's years: MusicBrainz's word stands
+    assert "p-kidd" in kept  # the band's named after him
     assert any(m["band_id"] == "other" for m in got)    # other bands untouched
     assert "original" in [a for m in got if m["person_id"] == "p-ann" for a in m["attributes"]]
 
@@ -140,3 +147,17 @@ def test_the_refiner_draws_the_line_ups_from_the_chart():
     cy = [s for s in band.stints if s.person_id == "p-cy"]
     assert cy and cy[0].roles[0] == "guitar"
     assert {s.name for s in band.stints} >= {"Ann Able", "Bob B. Baker", "Dee Dunn"}
+
+
+def test_colour_names_are_not_case_sensitive():
+    src = find_timeline(WIKITEXT).replace("color:bass", "color:Bass")
+    assert "Dee Dunn" in {m["name"] for m in chart_members(src, today=TODAY)}
+
+
+def test_a_short_first_name_is_the_same_musician():
+    mb = [{"person_id": "p-rob", "person_name": "Robert Bobbins", "band_id": "b", "band_name": "Band",
+           "begin": "1970", "end": None, "ended": False, "attributes": ["drums"]}]
+    chart = [{"name": "Bob Bobbins", "stints": []}, {"name": "Bobby Bobbins", "stints": []}]
+    from app.charts import _by_surname
+    assert _by_surname({"robertbobbins": mb}, "Rob Bobbins") == mb
+    assert _by_surname({"robertbobbins": mb}, "Rhonda Bobbins") is None

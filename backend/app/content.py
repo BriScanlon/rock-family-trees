@@ -180,7 +180,8 @@ def gather_charts(harvester, harvest, progress):
             chart, source = [], PARSER
             if title:
                 base = re.sub(r"\s*\([^)]*\)$", "", title)
-                for page in dict.fromkeys([f"List of {title} members", f"List of {base} members", title]):
+                for page in dict.fromkeys([f"List of {title} members", f"List of {base} members",
+                                           f"List of {base} band members", title]):  # "List of Oasis band members"
                     got = wiki.wikitext(page)
                     timeline = find_timeline(got["text"]) if got else None
                     if timeline:

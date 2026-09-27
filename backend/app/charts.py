@@ -17,7 +17,7 @@ import re
 import unicodedata
 from datetime import date
 
-PARSER = "charts-5"  # stored with each chart: one read by an older parser is read again
+PARSER = "charts-7"  # stored with each chart: one read by an older parser is read again
 MIN_DAYS = 30    # shorter than this is a stand-in or a slip (Blackmore "rejoined" 12-13 Aug 2026);
                  # Dale Crover's 43 days in Nirvana (a demo and shows, 1988) count
 JOIN_DAYS = 31   # stints closer than this are one stint (a change of instrument, not a departure)
@@ -120,7 +120,7 @@ def parse_timeline(source, today=None):
                 continue
         f = _fields(line)
         if section == "colors" and "id" in f and "legend" in f:
-            roles[f["id"]] = f["legend"].replace("_", " ").strip().lower()  # "bass, occasional vocals"
+            roles[f["id"].lower()] = f["legend"].replace("_", " ").strip().lower()  # "bass, occasional vocals"
         elif section == "bardata" and "bar" in f:
             name = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", f.get("text") or f["bar"])
             bars[f["bar"]] = _clean_name(name)
@@ -137,7 +137,7 @@ def parse_timeline(source, today=None):
                           _num(f["width"]) if "width" in f else width))
     out = {}
     for bar, start, end, col, w in plots:
-        role = roles.get(col)
+        role = roles.get((col or "").lower())  # colour names aren't case-sensitive (Episode Six: "Bass", "bass")
         if not _instrument(role):  # a band-era bar (Gillan's chart), touring or session work, releases
             continue
         s, e = _date(start, fmt, period, today), _date(end, fmt, period, today)
@@ -252,15 +252,37 @@ def apply_chart(memberships, chart, band_id, band_name, band_begin=None):
             out.append({"person_id": pid, "person_name": pname, "band_id": band_id, "band_name": band_name,
                         "begin": s["begin"], "end": s["end"], "ended": s["end"] is not None,
                         "attributes": attrs, "source": "wikipedia"})
-    out += [m for m in mine if id(m) not in used]  # MusicBrainz's word for anyone the chart doesn't name
+    # MusicBrainz's word for anyone the chart doesn't name - unless they're dated
+    # within the chart's own years, where the chart is the authority on who was a
+    # member (Joey Waronker, Oasis's touring drummer in 2025); or the band is named
+    # after them (Johnny Kidd)
+    span = (min((s["begin"] for c in chart for s in c["stints"]), default=None),
+            max(((s["end"] or "9999") for c in chart for s in c["stints"]), default=None))
+    for m in mine:
+        if id(m) in used:
+            continue
+        within = m.get("begin") and span[0] and span[0][:4] <= m["begin"][:4] <= span[1][:4]
+        eponymous = "eponymous" in [(a or "").lower() for a in m.get("attributes") or []]
+        if not within or eponymous:
+            out.append(m)
     return out + others
 
 
 def _by_surname(by_name, name):
-    """MusicBrainz's entry for a chart name that differs only in a middle name
-    or initial ('Joe Lynn Turner' / 'Joe Turner'): same first and last word."""
-    words = name_key(" ".join(name.split()[:1])), name_key(" ".join(name.split()[-1:]))
+    """MusicBrainz's entry for a chart name that differs in a middle name or a
+    short form of the first ('Joe Lynn Turner' / 'Joe Turner', 'Bobby' / 'Bob
+    Rondinelli', 'Rich' / 'Richard Williams'): the same surname, and first
+    names where one starts the other (or the first three letters agree)."""
+    parts = re.sub(r'"[^"]*"', " ", name).split()  # 'Larry "Rhino" Reinhardt'
+    if len(parts) < 2:
+        return None
+    first, last = name_key(parts[0]), name_key(parts[-1])
+
+    def same_first(a):
+        return a.startswith(first) or first.startswith(a) or (len(a) >= 3 and a[:3] == first[:3])
+
     hits = [ms for key, ms in by_name.items()
-            if ms and name_key(ms[0]["person_name"].split()[0]) == words[0]
-            and name_key(ms[0]["person_name"].split()[-1]) == words[1]]
+            if ms and len(ms[0]["person_name"].split()) >= 2
+            and name_key(ms[0]["person_name"].split()[-1]) == last
+            and same_first(name_key(ms[0]["person_name"].split()[0]))]
     return hits[0] if len(hits) == 1 else None
