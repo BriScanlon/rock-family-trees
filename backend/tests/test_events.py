@@ -210,3 +210,30 @@ def test_an_event_dated_to_month_zero_still_draws():
            "text": "Played a club so small the drummer set up in the car park outside."}
     tree, L = _layout_with_events([odd])
     assert all("1966" in e["heading"] for e in L["events"])
+
+
+class FakeRanker:
+    """Answers the rating pass: the fire 5, everything else 2."""
+    def __init__(self):
+        self.calls, outer = 0, self
+
+        class Messages:
+            def create(self, **kw):
+                outer.calls += 1
+                listing = kw["messages"][0]["content"]
+                idx = [int(i) for i in re.findall(r"\[(\d+)\]", listing)]
+                body = {"ratings": [{"index": i, "significance": 5 if f"[{i}] Their studio burnt" in listing else 2}
+                                    for i in idx]}
+                return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(body))])
+
+        self.beta = SimpleNamespace(messages=Messages())
+
+
+def test_a_bands_events_are_rated_against_each_other(store):
+    found = [dict(STAGE, significance=5, subject="Mill Sessions"), dict(FIRE, significance=3, subject="Mill Sessions")]
+    fake = FakeRanker()
+    got = events.rank(band(), found, client=fake)
+    assert got[FIRE["text"]] == 5 and got[STAGE["text"]] == 2  # the fire, not the stage, is the story
+    events.rank(band(), found, client=fake)
+    assert fake.calls == 1                 # stored, not asked again
+    assert store.latest_notes("x") is None  # ratings aren't the band's notes

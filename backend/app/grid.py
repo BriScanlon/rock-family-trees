@@ -35,6 +35,8 @@ FLOAT_SCALE = 1.4       # floating notes print larger than a block's: Frame lett
 TIME_COLUMNS = False    # time runs down each band and along each move; not every column (the user's choice: a fuller page)
 DRIFT = 4               # half-member columns a line-up may shift from the one before it (Frame's jogs)
 DRIFT_WEIGHT = 0.15     # cost per column of shift: straight lines unless drifting packs better
+RESERVE_ROOT = 3        # reservations for the poster's own band (one for each other band)
+RESERVE_SIGNIFICANCE = 4  # events this significant get room kept beside their line-up while packing
 SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
                         # its own pace (the user chose this over rows level across the page)
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
@@ -294,7 +296,8 @@ class GridLayout(Cartographer):
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
                    "dates": dates, "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
                    "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu,
-                   "recorded": recorded, "floating": floating, "items": items}
+                   "recorded": recorded, "floating": floating, "items": items,
+                   "reserve": self._reserve(band, lu, told_here)}
             self.boxes[box["id"]] = box
             self.box_order.append(box["id"])
             if i == 0 or lu.after_gap:
@@ -410,7 +413,8 @@ class GridLayout(Cartographer):
                      for c in cs if bid != u["band"].id and self.linked.get((u["band"].id, bid))]
             own = cols_of.get(u["band"].id, [])
             best = None
-            widths = [2 * b["span"] + 1 for b in u["boxes"]]  # each line-up its own width (a lone member is narrow)
+            # each line-up its own width (a lone member is narrow), plus the room kept for its big event
+            widths = [2 * b["span"] + 1 + b["reserve"] for b in u["boxes"]]
 
             def fits_at(cb, bw, r, when, keep=None):
                 """Room for a line-up dated `when` at sub-row r in columns cb..: nothing
@@ -560,7 +564,7 @@ class GridLayout(Cartographer):
             t, c0 = self._tier[b["id"]], self._col0[b["id"]]
             x, y = self._col_x(c0), row_y(t)
             lu = b["lineup"]
-            k = stretch[b["id"]]
+            k = 1.0 if b["reserve"] else stretch[b["id"]]  # the room beside it is its event's
             slot = self.slot * k  # members spread across the widened block
             if k > 1:  # wider: it holds more of its notes, fewer float beside it
                 self._refit_notes(b, b["span"] * slot)
@@ -613,6 +617,36 @@ class GridLayout(Cartographer):
                       **self._print_report(width, height)},
         }
         return layout
+
+    def _reserve(self, band, lu, told_here):
+        """Half-member columns to keep beside this line-up for its biggest
+        event (significance RESERVE_SIGNIFICANCE+), so the best stories -
+        the Montreux fire - get their room before lesser bands take it
+        (the user's instruction). The root band's best three, every other
+        band's best one; 0 if this line-up hasn't one, or the notes tell it."""
+        from app.events import same_story
+        told = [s["text"] for s in band.stories] + told_here
+        rank = lambda e: (e["significance"], e.get("sitelinks", 0), -e["year"])
+        big = [e for e in band.events if e.get("significance", 1) >= RESERVE_SIGNIFICANCE
+               and not same_story(e["text"], [s["text"] for s in band.stories])]
+        if not big:
+            return 0
+        # the poster's own band its three best stories, every other band its best:
+        # the room goes round the family
+        root = next(iter(self.tree.bands))
+        best = sorted(big, key=rank, reverse=True)[:RESERVE_ROOT if band.id == root else 1]
+        mine = [e for e in best if lineup_for(band.lineups, e["year"]) is lu and not same_story(e["text"], told)]
+        if not mine:
+            return 0
+        e = mine[0]
+        heading = f"{(e.get('subject') or '').upper()} · {e.get('date', '')[:4]}"
+        for w in EVENT_WIDTHS:
+            text_w = w * self.unit - 2 * EVENT_PAD
+            lines = wrap(e["text"], HAND, NOTE_SIZE * FLOAT_SCALE, text_w)
+            tall = NOTE_LINE * FLOAT_SCALE * (len(lines) + 1) + EVENT_PAD
+            if tall <= self.row_h and text_width(heading, HAND, DATE_SIZE * FLOAT_SCALE) <= text_w:
+                return w + 1  # and a column's gutter
+        return 0
 
     def _widen(self, placed, row_y, width):
         """How far each block stretches into the free columns to its right:

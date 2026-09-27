@@ -211,6 +211,10 @@ def gather_events(harvester, harvest, opts, progress):
                 got = ev.write_events(band, work, article, store=harvester.store)
                 out.setdefault(band.id, []).extend(
                     dict(n, subject=work["title"], kind=work["kind"], sitelinks=work["sitelinks"]) for n in got["notes"])
+            # then rated against each other, one scale for the band's whole story
+            ratings = ev.rank(band, out.get(band.id, []), store=harvester.store)
+            out[band.id] = [dict(e, significance=ratings.get(e["text"], e.get("significance", 1)))
+                            for e in out.get(band.id, [])]
         except Exception as e:  # events are extra: the poster is drawn without them
             print(f"No events for {band.name}: {type(e).__name__}: {e}")
     return out

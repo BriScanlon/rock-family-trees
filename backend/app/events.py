@@ -140,3 +140,60 @@ def same_story(event_text, story_texts):
         if ew and sw and len(ew & sw) / min(len(ew), len(sw)) >= 0.5:
             return True
     return False
+
+
+RANK_SYSTEM = """You rate moments from one rock band's history for a rock family tree, comparing them with each other.
+
+5: a moment most rock fans know - the Montreux casino fire that gave Deep Purple "Smoke on the Water", Ozzy Osbourne biting the head off a bat. At most one or two of these, if any.
+4: a story the band's fans retell.
+3: a notable incident worth a line.
+2: a detail.
+1: trivia.
+
+A first show at a venue, a live release, a chart place or a reissue is 1 or 2. Judge only what each moment is, not how it is worded. Give every moment a rating."""
+
+RANK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ratings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"index": {"type": "integer"}, "significance": {"type": "integer"}},
+                "required": ["index", "significance"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["ratings"],
+    "additionalProperties": False,
+}
+
+
+def rank(band, found, client=None, store=None):
+    """The band's events rated against each other ({text: 1-5}), in one pass:
+    rated one article at a time the model gave a first show at the O2 Arena 5
+    and the Montreux fire 3. Kept in the store (a "rank:" note set on the
+    band) and recalled while the events are the same."""
+    if len(found) < 2:
+        return {}
+    if store is None:
+        from app.store import get_store
+        store = get_store()
+    model = narrative._model_name(client)
+    texts = [f"{e['text']} ({e.get('subject', '')}, {e.get('date', '')})" for e in found]
+    digest = hashlib.sha1(f"{RANK_SYSTEM}|{model}|{'|'.join(texts)}".encode()).hexdigest()[:12]
+    key = f"rank:{band.id}:{digest}"
+    stored = store.get_notes(key)
+    if stored is None:
+        listing = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+        prompt = f"Band: {band.name}\n\nMoments:\n{listing}"
+        if narrative.BACKEND == "ollama" and client is None:
+            raw = narrative._ask_ollama(prompt, RANK_SYSTEM, RANK_SCHEMA)
+        else:
+            raw = narrative._ask_claude(prompt, client, RANK_SYSTEM, RANK_SCHEMA)
+        ratings = {r["index"]: max(1, min(5, int(r["significance"]))) for r in json.loads(raw or "{}").get("ratings", [])}
+        stored = {"notes": [{"text": e["text"], "significance": ratings[i]} for i, e in enumerate(found) if i in ratings],
+                  "model": model, "prompt": "rank", "source": None}
+        store.put_notes(key, band.id, stored)
+    return {n["text"]: n["significance"] for n in stored.get("notes", [])}

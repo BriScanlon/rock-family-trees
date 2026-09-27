@@ -97,7 +97,8 @@ class Neo4jStore:
     def latest_notes(self, band_id, model=None):
         """The band's most recently written notes (from any article revision),
         for when Wikipedia or the model can't be reached."""
-        where = "b.mbid = $band AND ns.model <> 'curator'" + (" AND ns.model = $model" if model else "")
+        where = ("b.mbid = $band AND ns.model <> 'curator' AND NOT ns.key STARTS WITH 'rank:'"
+                 + (" AND ns.model = $model" if model else ""))  # event ratings aren't the band's notes
         with self.driver.session() as s:
             return s.execute_read(self._get_notes_tx, where, band=band_id, model=model,
                                   match="MATCH (b:Band)-[:HAS_NOTES]->(ns:NoteSet)")
