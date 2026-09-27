@@ -109,6 +109,22 @@ Deep Purple A1 (40 candidate bands, 240 line-ups, 162 notes):
 
 Most of the remaining white space is beside blocks within a row. Next steps are to widen blocks sideways into free columns, which is issue #4 territory, and to speed up the packer so more layouts can be tried.
 
+## Line tracks (issue #4) and Wikipedia member charts (issue #7 stage 2), 2026-09-27
+
+**Line tracks.** Parallel lines were offset by a counter cycling through five positions, so the sixth line in a gap lay on the first. `grid._Tracks` now gives each run the nearest track that is free along its whole length:
+- channels have tracks 4px apart (seven in a 30px channel); gaps have tracks 5px apart;
+- a departure's track sits above any arrival's in the same column, so their drops never merge.
+
+On Deep Purple A1, overlapping runs between different musicians went from 6 to 1; the one left is in a channel full across its width. The old #4 ideas for the lane layout (lane ordering, 2D packing) are superseded by the grid. Rejoin stubs and bundles are not done: Frame drew those lines.
+
+**Member charts.** `app/charts.py` reads a band's EasyTimeline chart from the wikitext of "List of X members", or else the article:
+- it works out stints to the day, with the principal instrument taken from the full-width bar;
+- it drops blips under 45 days and merges breaks under a month;
+- the chart is stored on the band record (`chart`, `chart_source` = page@revision) beside MusicBrainz's memberships, never over them;
+- the refiner applies it for the members it lists.
+
+Deep Purple family: 13 of 80 candidate bands have a chart. Deep Purple now matches it exactly (Bolin on guitar, Satriani, the 1989 gap). Rainbow has none, and its MusicBrainz data is poor (Blackmore missing after 1993, roles blank): that is the case for the line-up confirmation graph, which is deferred.
+
 ## How the look was arrived at
 
 1. First pass: boxed line-ups on aged paper with a Western title font. Research found Frame's trees are black ink on white, in precise architectural hand lettering (he trained as a surveyor/architect), with many handwritten notes. Sources: Eye Magazine "Branches and roots" (issue 78, 2010), Wikipedia, and interviews. Most pages couldn't be fetched from the sandbox, only searched.
