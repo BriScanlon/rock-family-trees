@@ -26,10 +26,10 @@ from app.narrative import lineup_for
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
-CAREERS = 3             # a band's longest-serving members whose other bands (off this poster) are told
+CAREERS = 12            # a band's longest-serving members whose other bands (off this poster) are told
 EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
 EVENT_PAD = 10          # margin inside an event block's cells
-EVENT_REACH = 4         # an event in another row sits within this many columns of its line-up
+NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
@@ -40,8 +40,8 @@ MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the s
 MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
 MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
 HINT_WEIGHT = 0.2       # pull (per column) towards a band's preferred column, when the optimiser gives one
-ERA_WEIGHT = 1.5        # pull towards the row where line-ups of the same date sit
-TOP_WEIGHT = 0.3        # pull towards the top: keep the tree compact
+ERA_WEIGHT = 0.5        # pull towards the row where line-ups of the same date sit
+TOP_WEIGHT = 1.0        # pull towards the top: keep the tree compact
 NEAR_WEIGHT = 0.08      # pull (per column) towards bands sharing musicians
 
 
@@ -261,26 +261,33 @@ class GridLayout(Cartographer):
             info = [n["text"] for n in self.info.get(band.id, []) if lineup_for(band.lineups, n["year"]) is lu]
             albums = _albums_of(band, lu)  # this line-up's albums, told in its block as Frame did
 
-            def compose(k):
-                return " ".join((told_here + ([_recorded(albums, k)] if albums else []) + said + info + extra)[:MAX_NOTES])
+            recorded = _recorded(albums)
+            # most telling first; what the block can't hold whole floats beside it (_place_notes)
+            items = ([(t, "story", 4) for t in told_here] + ([(recorded, "albums", 3)] if recorded else [])
+                     + [(t, "told", 2) for t in said + extra]
+                     + [(t, "style" if t.startswith("Style:") else "career", 0 if t.startswith("Style:") else 1)
+                        for t in info])
 
             def too_long(text, n):
                 return len(wrap(text, HAND, NOTE_SIZE, n * slot - 8)) > NOTE_LINES
 
             widest = span + NOTE_WIDEN
-            while span < widest and too_long(compose(None), span):  # widen for the story and the albums
+            story = " ".join(t for t, kind, _ in items if kind in ("story", "albums"))
+            while span < widest and too_long(story, span):  # widen for the story and the albums
                 span += 1
-            shown = len(albums)
-            while shown > 1 and too_long(compose(shown), span):  # still short of room: "... and 3 more"
-                shown -= 1
-            recorded = _recorded(albums, shown)
-            notes = compose(shown)
+            shown, floating = [], []
+            for text, kind, priority in items:  # whole sentences only, never cut off with "..."
+                if not too_long(" ".join(shown + [text]), span):
+                    shown.append(text)
+                else:
+                    floating.append({"text": text, "kind": kind, "priority": priority})
+            notes = " ".join(shown)
             box = {"id": f"{band.id}#{lu.number}", "band_id": band.id, "band_name": band.name, "number": lu.number,
                    "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
                    "dates": dates, "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
                    "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu,
-                   "recorded": recorded}
+                   "recorded": recorded, "floating": floating}
             self.boxes[box["id"]] = box
             self.box_order.append(box["id"])
             if i == 0 or lu.after_gap:
@@ -520,10 +527,7 @@ class GridLayout(Cartographer):
                                 "y_name": y_name, "lines": lines, "roles": roles, "bottom": bottom})
             members.sort(key=lambda m: m["col"])
             cxs = [m["cx"] for m in members] or [x + slot / 2]
-            notes = wrap(b["notes_text"], HAND, NOTE_SIZE, b["span"] * slot - 8)
-            if len(notes) > NOTE_LINES:
-                notes = notes[:NOTE_LINES]
-                notes[-1] = notes[-1].rstrip(" .,;") + "…"
+            notes = wrap(b["notes_text"], HAND, NOTE_SIZE, b["span"] * slot - 8)[:NOTE_LINES]
             b.update({"x": x, "y": y, "w": b["span"] * slot, "h": self.block_h, "footprint": self.block_h,
                       "lane": c0, "row": t, "bar_y": y + self.bar_dy, "bar": (min(x, min(cxs) - 12), max(cxs) + 12),
                       "members": members, "overflow": max(0, len(lu.members) - MAX_MEMBERS),
@@ -531,7 +535,7 @@ class GridLayout(Cartographer):
             boxes.append(b)
 
         trunks, edges = self._route(placed, x0, row_y)
-        events = self._place_events(boxes, trunks, edges, x0, row_y, width, height, self.max_rows or used_rows)
+        events = self._place_notes(boxes, trunks, edges, x0, row_y, width, height, self.max_rows or used_rows)
         years = []
         for t in range(used_rows):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
@@ -573,11 +577,11 @@ class GridLayout(Cartographer):
         rows = [t for t in range(n_rows) if row_y(t + 1) <= height - FOOTER_H + 1]
         # the blocks themselves, not the width their band reserves (a band's
         # narrower line-ups leave room beside them), and every line's path
-        blocks = set()
+        blocks, busy = set(), set()
         for b in boxes:
             for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
-                blocks.add((b["row"], c))
-        busy = set(blocks)
+                busy.add((b["row"], c))
+            blocks.update((b["row"], c) for c in range(b["lane"], b["lane"] + 2 * b["span"]))  # not its gap for lines
         for line in list(trunks) + list(edges):
             pts = line["points"]
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
@@ -591,94 +595,128 @@ class GridLayout(Cartographer):
         free = {(t, c) for t in rows for c in range(c_lo, c_hi) if (t, c) not in busy}
         return free, blocks, rows, c_lo, c_hi
 
-    def _place_events(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
-        """Each event (app/events.py) its own small block in free cells beside
-        the line-up it happened to, most significant first, tied to it with a
-        dotted line: part of the band's history on the page, and it fills the
-        gaps (the user's idea). In the line-up's own row where there's room
-        (the tie runs along the row), else a row whose years hold the event,
-        close by. An event already told in the band's notes, or with no room,
-        is left out."""
-        from app.events import same_story
+    def _place_notes(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """Floating notes, each its own small block in free cells near the
+        line-up it belongs to, tied to it with a dotted line: the events from
+        its albums and tours (app/events.py) and whatever its block couldn't
+        hold whole - story, albums, careers, style. Most telling first, as
+        close as there's room: the line-up's own row, else up to NOTE_ROWS
+        rows away (the page is to be full, with everything in its place in
+        the history - the user's instructions). A tie runs along the row and
+        down a column, crossing lines but never a block."""
+        from app.events import MIN_SIGNIFICANCE, same_story
         from app.refiner import MONTHS
         free, blocks, rows, c_lo, c_hi = self._free_cells(boxes, trunks, edges, x0, row_y, width, height, n_rows)
         by_id = {b["id"]: b for b in boxes}
-        starts = {}
-        for b in boxes:
-            starts[b["row"]] = min(starts.get(b["row"], 1e9), b["start"])
-        era = lambda t: (starts.get(t, 1e9), min((s for r, s in starts.items() if r > t), default=1e9))
-        from app.events import MIN_SIGNIFICANCE
-        pending = sorted(((e, band) for band in self.tree.bands.values() for e in band.events
-                          if e.get("significance", 1) >= MIN_SIGNIFICANCE),
-                         key=lambda eb: (-eb[0].get("significance", 1), -eb[0].get("sitelinks", 0), eb[0]["year"]))
         told = {band.id: [s["text"] for s in band.stories] for band in self.tree.bands.values()}
         for b in boxes:
             told.setdefault(b["band_id"], []).append(b["notes_text"])
+        pending = []
+        for band in self.tree.bands.values():
+            for e in band.events:
+                if e.get("significance", 1) < MIN_SIGNIFICANCE:
+                    continue
+                lu = lineup_for(band.lineups, e["year"])
+                box = by_id.get(f"{band.id}#{lu.number}") if lu else None
+                if box is None:
+                    continue
+                when = e.get("date") or ""
+                label = (f"{MONTHS[int(when[5:7]) - 1]} {when[:4]}" if len(when) >= 7 and when[5:7].isdigit()
+                         else when[:4]).upper()
+                heading = f"{e['subject'].upper()} · {label}" if e.get("subject") else label
+                pending.append({"text": e["text"], "kind": "event", "priority": 4 + e["significance"],
+                                "heading": heading, "box": box, "band": band, "year": e["year"],
+                                "significance": e["significance"]})
+        for b in boxes:
+            for n in b.get("floating", []):
+                pending.append(dict(n, heading=None, box=b, band=self.tree.bands[b["band_id"]], year=b["start"]))
+        pending.sort(key=lambda n: (-n["priority"], n["year"]))
         placed = []
-        for e, band in pending:
-            lu = lineup_for(band.lineups, e["year"])
-            box = by_id.get(f"{band.id}#{lu.number}") if lu else None
-            if box is None or same_story(e["text"], told[band.id]):
+        for n in pending:
+            band, box = n["band"], n["box"]
+            if n["kind"] == "event" and same_story(n["text"], told[band.id]):
                 continue
-            when = e.get("date") or ""
-            label = (f"{MONTHS[int(when[5:7]) - 1]} {when[:4]}" if len(when) >= 7 and when[5:7].isdigit()
-                     else when[:4]).upper()
-            heading = f"{e['subject'].upper()} · {label}" if e.get("subject") else label
-            spot = self._event_spot(e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading)
-            if spot is not None and spot[0] != box["row"]:  # no tie along the row: say whose it is
-                heading = f"{band.name.upper()} · {heading}"
-                spot = self._event_spot(e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading)
+            spot = self._note_spot(n, box, free, blocks, rows, c_lo, c_hi, row_y)
             if spot is None:
                 continue
-            (t, c, w, lines, tie_cells) = spot
+            t, c, w, lines, path_cells, tie = spot
             for k in range(c, c + w):
                 free.discard((t, k))
-            blocks.update((t, k) for k in range(c, c + w))  # a later tie mustn't cross this block
-            x, y = self._col_x(c) + EVENT_PAD, row_y(t) + EVENT_PAD
-            ew = self._col_x(c + w) - self._col_x(c) - 2 * EVENT_PAD
-            eh = NOTE_LINE * (len(lines) + 1) + 2 * EVENT_PAD
-            mid = box["y"] + self.title_h / 2
-            tie = None
-            if t == box["row"]:  # along the row, from the line-up's edge to the block's
-                tie = ([(box["x"] + box["w"] + 4, mid), (x - EVENT_PAD / 2, mid)] if c >= box["lane"]
-                       else [(box["x"] - 4, mid), (x + ew + EVENT_PAD / 2, mid)])
-            placed.append({"band_id": band.id, "lineup": box["id"], "year": e["year"], "x": x - EVENT_PAD / 2,
-                           "y": y - EVENT_PAD / 2, "w": ew + EVENT_PAD, "h": eh, "heading": heading, "lines": lines,
-                           "significance": e.get("significance", 1), "tie": tie})
-            told[band.id].append(e["text"])
+                blocks.add((t, k))
+            for cell in path_cells:  # a later note mustn't sit on this tie
+                free.discard(cell)
+            x, y = self._col_x(c) + EVENT_PAD / 2, row_y(t) + EVENT_PAD / 2
+            ew = self._col_x(c + w) - self._col_x(c) - EVENT_PAD
+            eh = NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD
+            placed.append({"band_id": band.id, "lineup": box["id"], "year": n["year"], "kind": n["kind"],
+                           "x": x, "y": y, "w": ew, "h": eh, "heading": n["heading"], "lines": lines,
+                           "significance": n.get("significance"), "tie": tie})
+            told[band.id].append(n["text"])
         return placed
 
-    def _event_spot(self, e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading):
-        """(row, column, width, lines, cells the tie crosses) for an event, or None."""
+    def _note_spot(self, n, box, free, blocks, rows, c_lo, c_hi, row_y):
+        """(row, column, width, lines, cells the tie crosses, tie points) for a
+        floating note, or None: the narrowest block that holds it, nearest
+        its line-up, with a tie that crosses no block."""
         bl, br = box["lane"], box["lane"] + 2 * box["span"] + 1
         home = box["row"]
+        mid = lambda t: row_y(t) + self.title_h / 2
+        colx = lambda k: (self._col_x(k) + self._col_x(k + 1)) / 2
+        own = {(home, k) for k in range(bl, br)}
+        clear = lambda cells: all(cell not in blocks or cell in own for cell in cells)
         best = None
-        for t in rows:
-            lo, hi = era(t)
-            if t != home and not (lo <= e["year"] < hi):
+        for t in sorted(rows, key=lambda r: abs(r - home)):
+            if abs(t - home) > NOTE_ROWS or (best is not None and abs(t - home) * 6 > best[0][0]):
                 continue
-            room = row_y(t + 1) - row_y(t) - 2 * EVENT_PAD
+            room = row_y(t + 1) - row_y(t) - EVENT_PAD
             for w in EVENT_WIDTHS:
                 text_w = self._col_x(w) - self._col_x(0) - 2 * EVENT_PAD
-                lines = wrap(e["text"], HAND, NOTE_SIZE, text_w)
-                if NOTE_LINE * (len(lines) + 1) > room or text_width(heading, HAND, DATE_SIZE) > text_w:
+                lines = wrap(n["text"], HAND, NOTE_SIZE, text_w)
+                if (NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) > room
+                        or (n["heading"] and text_width(n["heading"], HAND, DATE_SIZE) > text_w)):
                     continue
                 for c in range(c_lo, c_hi - w + 1):
                     if not all((t, k) in free for k in range(c, c + w)):
                         continue
+                    right = c >= br
+                    edge_x = box["x"] + box["w"] + 4 if right else box["x"] - 4
+                    near_x = self._col_x(c) + EVENT_PAD / 2 if c >= bl else self._col_x(c + w) - EVENT_PAD / 2
                     if t == home:
-                        between = range(br, c) if c >= br else range(c + w, bl)
-                        if any((t, k) in blocks for k in between):  # the tie may cross lines, not blocks
+                        if not right and c + w > bl:
                             continue
-                        gap, tie_cells = len(between), [(t, k) for k in between]
+                        between = range(br, c) if right else range(c + w, bl)
+                        cells = [(t, k) for k in between]
+                        if not clear(cells):
+                            continue
+                        cost = len(cells)
+                        tie = [(edge_x, mid(home)), (near_x, mid(home))]
                     else:
-                        gap = max(0, c - br, bl - (c + w))
-                        if gap > EVENT_REACH:
+                        step = 1 if t > home else -1
+                        lo_c, hi_c = min(bl, c), max(br - 1, c + w - 1)
+                        route = None
+                        # straight out of the block's bottom (or top), down its own column, along to the note
+                        tc = min(max(c if c > bl else c + w - 1, bl), br - 1)  # its gap column at most
+                        down = [(r, tc) for r in range(home + step, t, step)]
+                        along = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
+                        if clear(down + along):
+                            y0 = box["y"] + box["h"] if t > home else box["y"]
+                            route = (down + along, [(colx(tc), y0), (colx(tc), mid(t)),
+                                                    (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
+                        if route is None:  # else along the home row to a column beside the block first
+                            tc = br if right or c >= bl else bl - 1
+                            leg1 = [(home, k) for k in (range(br, tc + 1) if tc >= br else range(tc, bl))]
+                            leg2 = [(r, tc) for r in range(home + step, t, step)]
+                            leg3 = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
+                            if clear(leg1 + leg2 + leg3):
+                                route = (leg1 + leg2 + leg3, [(edge_x, mid(home)), (colx(tc), mid(home)), (colx(tc), mid(t)),
+                                                              (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
+                        if route is None:
                             continue
-                        gap, tie_cells = gap + 20 + 5 * abs(t - home), []
-                    score = (gap, w)
+                        cells, tie = route
+                        cost = 6 * abs(t - home) + len(cells)
+                    score = (cost, w)
                     if best is None or score < best[0]:
-                        best = (score, (t, c, w, lines, tie_cells))
+                        best = (score, (t, c, w, lines, cells, tie))
                 break  # the narrowest width that holds the text
         return best[1] if best else None
 

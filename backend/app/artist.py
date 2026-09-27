@@ -215,13 +215,16 @@ class Artist:
             self._add(f'<rect x="{e["x"]:.1f}" y="{e["y"]:.1f}" width="{e["w"]:.1f}" height="{e["h"]:.1f}" '
                       f'rx="6" fill="none" stroke="{INK}" stroke-width="1"/>')
             tx, ty = e["x"] + EVENT_INSET, e["y"] + EVENT_INSET
-            self._text(tx, ty + DATE_SIZE, e["heading"], DATE_SIZE, bold=True, fit=e["w"] - 2 * EVENT_INSET)
+            top = 0
+            if e.get("heading"):
+                self._text(tx, ty + DATE_SIZE, e["heading"], DATE_SIZE, bold=True, fit=e["w"] - 2 * EVENT_INSET)
+                top = NOTE_LINE
             for i, line in enumerate(e["lines"]):
-                self._text(tx, ty + DATE_SIZE + (i + 1) * NOTE_LINE, line, NOTE_SIZE)
-            if e.get("tie"):
-                (x1, y1), (x2, y2) = e["tie"]
-                self._add(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{INK}" '
-                          f'stroke-width="1.2" stroke-dasharray="2 4" stroke-linecap="round"/>')
+                self._text(tx, ty + NOTE_SIZE + top + i * NOTE_LINE, line, NOTE_SIZE)
+            if e.get("tie"):  # along the row, and down a column where the note is in another row
+                pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in e["tie"])
+                self._add(f'<polyline points="{pts}" fill="none" stroke="{INK}" stroke-width="1.2" '
+                          f'stroke-dasharray="2 4" stroke-linecap="round" stroke-linejoin="round"/>')
 
     def _footer(self, W, H):
         fy = self.L["footer_y"]
@@ -231,7 +234,7 @@ class Artist:
             ("trunk", "A MUSICIAN'S LINE, FROM ONE LINE-UP TO THE NEXT"),
             ("dashed", "BAND SPLIT, LATER RE-FORMED"),
             ("move", "MUSICIAN MOVES ON TO ANOTHER BAND"),
-        ] + ([("event", "AN EVENT IN THE LINE-UP'S STORY")] if self.L.get("events") else [])
+        ] + ([("event", "MORE OF A LINE-UP'S STORY, TIED TO IT")] if self.L.get("events") else [])
         for i, (kind, label) in enumerate(items):
             y = fy + 30 + i * 26
             if kind == "event":

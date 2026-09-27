@@ -48,7 +48,7 @@ def _compose(trees, chosen):
 
 
 # placement pulls (era, top, near) tried for the final layout, each from the left and the right
-ARRANGEMENTS = [(1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
+ARRANGEMENTS = [None, (1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
 
 
 def _fullest(tree, paper, lettering, subtitle=None):
@@ -182,9 +182,11 @@ def _fit_trees(trees, paper, timeline, lettering, optimise_seconds=0, **layout_k
         return result(tree, GridLayout(tree, paper=paper, lettering=lettering, **layout_kw).layout())
     if optimise_seconds > 0:
         from app.optimise import optimise
-        tree, layout, score = optimise(trees, paper, lettering, chosen, optimise_seconds, **layout_kw)
-        tree, layout, fit = result(tree, layout)
-        return tree, layout, dict(fit, placement=score)
+        got = optimise(trees, paper, lettering, chosen, optimise_seconds, **layout_kw)
+        if got is not None:
+            tree, layout, score = got
+            tree, layout, fit = result(tree, layout)
+            return tree, layout, dict(fit, placement=score)
     tree = _compose(trees, chosen)
     return result(tree, _fullest(tree, paper, lettering, **layout_kw))
 
