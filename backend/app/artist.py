@@ -90,6 +90,7 @@ class Artist:
         self._trunks()
         self._add("</g>")
         self._boxes(wobble)
+        self._panels()
         self._footer(W, H)
         self._add("</svg>")
         return "\n".join(self.parts)
@@ -198,9 +199,28 @@ class Artist:
             if b["overflow"]:
                 last = max(b["members"], key=lambda m: m["cx"])
                 self._text(last["cx"] + ls["col_w"] / 2, b["y"] + b["h"], f"+ {b['overflow']} more", ROLE_SIZE, "end")
-            # a paragraph of notes beside the line-up
-            for i, note in enumerate(b["notes"]):
-                self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
+            # a paragraph of notes: under the band name (Frame's grid) or beside the line-up
+            if b.get("notes_y") is not None:
+                for i, note in enumerate(b["notes"]):
+                    self._text(b["notes_x"], b["notes_y"] + NOTE_SIZE + i * NOTE_LINE, note, NOTE_SIZE, halo=True)
+            else:
+                for i, note in enumerate(b["notes"]):
+                    self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
+
+    def _panels(self):
+        """Text in the gaps, as on Frame's trees: for each band, its name, then
+        more of its story, where its musicians went, its albums."""
+        ls = self.ls
+        for p in self.L.get("panels", []):
+            y = p["y"]
+            for sec in p["sections"]:
+                self._text(p["x"], y + 20, sec["title"], 22, family=ls["family"], weight=ls["weight"],
+                           bold=ls["bold"], fit=p["w"])
+                self._add(f'<line x1="{p["x"]:.1f}" y1="{y + 27:.1f}" x2="{p["x"] + min(p["w"], 160):.1f}" '
+                          f'y2="{y + 27:.1f}" stroke="{INK}" stroke-width="1"/>')
+                for i, line in enumerate(sec["lines"]):
+                    self._text(p["x"], y + 30 + NOTE_SIZE + i * NOTE_LINE, line, NOTE_SIZE)
+                y += 30 + len(sec["lines"]) * NOTE_LINE + 12
 
     def _footer(self, W, H):
         fy = self.L["footer_y"]

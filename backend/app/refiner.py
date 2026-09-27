@@ -1,6 +1,7 @@
 """Turns harvested MusicBrainz records into a family-tree model:
 bands -> numbered line-ups -> members, plus who died when and which bands
 to keep. Times are fractional years (1966.25 == April 1966)."""
+import math
 from collections import Counter, defaultdict
 from datetime import date
 from typing import Dict, List, Optional
@@ -53,6 +54,7 @@ ROLE_WORDS = [
 ]
 NON_ROLE_ATTRIBUTES = {"original", "founder", "additional", "minor", "guest", "support", "touring", "eponymous"}
 ROLE_ORDER = ["vocals", "guitar", "steel guitar", "bass", "keyboards", "synths", "piano", "organ", "drums", "percussion"]
+PRINCIPAL_ROLES = {"vocals", "guitar", "bass", "keyboards", "piano", "organ", "synths", "drums"}
 
 
 def role_words(attributes):
@@ -66,6 +68,10 @@ def role_words(attributes):
             out.append(word)
     if len(out) > 1 and "backing vocals" in out:
         out.remove("backing vocals")
+    # a principal instrument first (Frame gives each musician one): MusicBrainz
+    # lists Ian Gillan as "harmonica, lead vocals, percussion". Among principal
+    # instruments MusicBrainz's order stands: Glenn Hughes is "bass, vocals".
+    out.sort(key=lambda r: 0 if r in PRINCIPAL_ROLES else 1)
     return out[:3]
 
 
@@ -76,6 +82,14 @@ def _role_rank(roles):
     return len(ROLE_ORDER)
 
 
+FOUNDER_YEARS = 10   # a founder's minimum tenure in the band they founded
+MOVE_YEARS = 2       # left one band and joined the other within this: a direct move
+MOVE_BONUS = 2.0
+SIDE_PROJECT = 0.3
+UNDATED_YEARS = 0.25
+MOSTLY_DATED = 0.5    # leave undated members out of the line-ups only when at least this share are dated  # what an undated membership counts for when ranking bands
+
+
 class Stint(BaseModel):
     person_id: str
     name: str
@@ -84,6 +98,7 @@ class Stint(BaseModel):
     roles: List[str] = []
     start_label: Optional[str] = None
     end_label: Optional[str] = None
+    original: bool = False  # a founder member (MusicBrainz "original")
 
 
 class LineupMember(BaseModel):
@@ -113,6 +128,10 @@ class Band(BaseModel):
     ended: bool = True
     stints: List[Stint] = []
     lineups: List[Lineup] = []
+    undated: List[str] = []  # members MusicBrainz gives no dates for, left out of the line-ups
+    stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
+    albums: List[str] = []  # studio albums, "1972 Machine Head" (MusicBrainz)
+    genres: List[str] = []
 
 
 class Person(BaseModel):
@@ -120,6 +139,7 @@ class Person(BaseModel):
     name: str
     died: Optional[float] = None
     died_label: Optional[str] = None
+    bands: List[str] = []  # every band they played in, as MusicBrainz knows it (earliest first)
 
 
 class FamilyTree(BaseModel):
@@ -147,6 +167,14 @@ class Refiner:
             died, died_label = parse_date(rec.get("end")) if rec.get("ended") else (None, None)
             people[rec["mbid"]] = Person(id=rec["mbid"], name=rec["name"], died=died, died_label=died_label)
 
+        # A musician's instrument where MusicBrainz leaves it off one membership
+        # but gives it on another (Dio: none in Rainbow, "lead vocals" in Black Sabbath)
+        self.known_roles = defaultdict(Counter)
+        for rec in records.values():
+            for m in rec.get("memberships", []):
+                for r in role_words(m.get("attributes"))[:1]:
+                    self.known_roles[m["person_id"]][r] += 1
+
         bands = {}
         for band_id, level in levels.items():
             rec = records.get(band_id)
@@ -158,6 +186,15 @@ class Refiner:
             for s in (band.stints if band else []):
                 people.setdefault(s.person_id, Person(id=s.person_id, name=s.name))
 
+        # each musician's whole career, for the notes in the gaps ("also played with ...")
+        career = defaultdict(dict)
+        for rec in records.values():
+            for m in rec.get("memberships", []):
+                year = parse_date(m.get("begin"))[0] or 9999
+                career[m["person_id"]][m["band_name"]] = min(year, career[m["person_id"]].get(m["band_name"], 9999))
+        for pid, person in people.items():
+            person.bands = [n for n, _ in sorted(career.get(pid, {}).items(), key=lambda kv: (kv[1], kv[0])) if n]
+
         selected = self._select(bands, harvest.get("root_bands", []))
         root_name = harvest.get("root_name", "")
         return FamilyTree(
@@ -167,6 +204,10 @@ class Refiner:
             bands=selected,
             people=people,
         )
+
+    def _role_for(self, person_id):
+        known = getattr(self, "known_roles", {}).get(person_id)
+        return [known.most_common(1)[0][0]] if known else []
 
     # -- bands -----------------------------------------------------------
     def _build_band(self, rec, level):
@@ -186,18 +227,37 @@ class Refiner:
                 return None
             b_start = min(starts)
         ended = bool(rec.get("ended")) or b_end is not None
+        # MusicBrainz leaves many long-gone bands without an end date (MI5, 1966-67):
+        # only call a band current if someone's dated membership is still open
+        still_open = any(s is not None and e is None and not m.get("ended") for m, s, sl, e, el in parsed)
+        if not ended and not still_open:
+            ended = True
         if b_end is None:
             if ended:
-                ends = [p[3] for p in parsed if p[3] is not None]
-                b_end = max(ends) if ends else b_start + 1
+                known = [t for p in parsed for t in (p[1], p[3]) if t is not None]
+                b_end = max(known) if known else b_start + 1
             else:
                 b_end = self.today
         if b_end <= b_start:
             b_end = b_start + 0.5
 
         labels = {b_start: b_start_label or format_time(b_start), b_end: b_end_label or format_time(b_end)}
+        # An undated membership would span the band's whole life: David Stone
+        # (Rainbow keyboards 1977-78) turned up in every Rainbow line-up and hid
+        # its 1984-93 break. Where other members are dated, leave the undated
+        # ones out of the line-ups (and say so) - unless they founded the band
+        # or it's named after them (Ian Gillan in Gillan).
+        # Only when they're the exception: where most members are undated (MI5:
+        # only Ian Paice has dates) the undated ones are the band, so keep them.
+        dated_share = sum(s is not None or e is not None for m, s, sl, e, el in parsed) / max(1, len(parsed))
+        any_dated = dated_share >= MOSTLY_DATED
+        undated = []
         stints = []
         for m, s, sl, e, el in parsed:
+            if any_dated and s is None and e is None and not _anchors(m, rec["name"]):
+                role = role_words(m.get("attributes"))[:1] or list(self._role_for(m["person_id"]))
+                undated.append(f"{m['person_name']}{f' ({role[0]})' if role else ''}")
+                continue
             if s is None:
                 s = b_start
             if e is None:
@@ -212,11 +272,14 @@ class Refiner:
                     labels[t] = lab
             stints.append(Stint(
                 person_id=m["person_id"], name=m["person_name"] or "?", start=s, end=e,
-                roles=role_words(m.get("attributes")), start_label=sl, end_label=el,
+                roles=role_words(m.get("attributes")) or self._role_for(m["person_id"]),
+                start_label=sl, end_label=el,
+                original="original" in [(a or "").lower() for a in m.get("attributes") or []],
             ))
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
-                    ended=ended, stints=stints)
+                    ended=ended, stints=stints, undated=list(dict.fromkeys(undated)),
+                    genres=list(rec.get("genres") or [])[:3])
         band.lineups = self._lineups(band, labels)
         return band
 
@@ -292,39 +355,69 @@ class Refiner:
 
     # -- selection ------------------------------------------------------
     def _select(self, bands, root_bands):
+        """The root band(s), then the bands most strongly linked to those
+        already chosen, a generation at a time. A link is a musician both
+        bands share, worth more the longer they served on each side (the
+        geometric mean of the two tenures), double if they moved straight
+        from one band to the other (the family's lineage: Nirvana to Foo
+        Fighters) and less than a third if the candidate was a side project
+        running alongside the chosen band. A founder counts as long-serving
+        in the band they founded even if their dates say otherwise."""
         chosen = {b: bands[b] for b in root_bands if b in bands}
         if not chosen:
             return {}
-        people_in = lambda b: {s.person_id for s in b.stints}
-        chosen_people = set().union(*(people_in(b) for b in chosen.values()))
-        # Years each musician served in the bands chosen so far: a band linked
-        # through a 36-year singer matters more than one linked by a stand-in.
-        tenure = defaultdict(float)
+        tenure = defaultdict(float)   # years each musician served in the bands chosen so far
+        served = defaultdict(list)    # their stints in those bands
 
-        def add_tenure(band):
+        def add(band):
             for st in band.stints:
-                tenure[st.person_id] += st.end - st.start
+                years = st.end - st.start
+                if st.original:
+                    years = max(years, min(FOUNDER_YEARS, band.end - band.start))
+                tenure[st.person_id] += years
+                served[st.person_id].append(st)
 
         for b in chosen.values():
-            add_tenure(b)
+            add(b)
+
+        def strength(band):
+            total = 0.0
+            for pid in {s.person_id for s in band.stints} & set(tenure):
+                here = [s for s in band.stints if s.person_id == pid]
+                # an undated membership is filled in with the band's whole life
+                # when drawn; as evidence of a link it is worth only a little
+                years_here = sum(s.end - s.start if (s.start_label or s.end_label) else UNDATED_YEARS
+                                 for s in here)
+                link = math.sqrt(tenure[pid] * max(years_here, 0.25))
+                there = served[pid]
+                direct = any(0 <= t.start - h.end <= MOVE_YEARS or 0 <= h.start - t.end <= MOVE_YEARS
+                             for h in here for t in there)
+                alongside = any(min(h.end, t.end) - max(h.start, t.start) > 1 for h in here for t in there)
+                total += link * (MOVE_BONUS if direct else SIDE_PROJECT if alongside else 1.0)
+            return total
 
         rest = [b for b in bands.values() if b.id not in chosen]
         for level in sorted({b.level for b in rest}):
-            candidates = []
-            for b in rest:
-                if b.level != level:
-                    continue
-                shared = people_in(b) & chosen_people
-                if shared:
-                    candidates.append((sum(tenure[p] for p in shared), b))
+            candidates = [(strength(b), b) for b in rest if b.level == level]
+            candidates = [c for c in candidates if c[0] > 0]
             candidates.sort(key=lambda c: (-c[0], c[1].start, c[1].name))
             for _, b in candidates:
                 if len(chosen) >= self.max_bands:
                     return chosen
                 chosen[b.id] = b
-                chosen_people |= people_in(b)
-                add_tenure(b)
+                add(b)
         return chosen
+
+
+def _anchors(membership, band_name):
+    """A member whose undated membership may still span the band's life: a
+    founder, or the one the band is named after."""
+    if "original" in [(a or "").lower() for a in membership.get("attributes") or []]:
+        return True
+    name = (membership.get("person_name") or "").lower()
+    surname = name.split()[-1] if name.split() else ""
+    band = band_name.lower()
+    return bool(name) and (name in band or (len(surname) > 3 and surname in band.split()))
 
 
 def default_title(root_name):

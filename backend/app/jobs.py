@@ -21,16 +21,30 @@ def write_status(job_id, **fields):
     tmp = _path(job_id) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(current, f)
-    os.replace(tmp, _path(job_id))
+    _retry(lambda: os.replace(tmp, _path(job_id)))
     return current
 
 
 def read_status(job_id):
-    try:
+    def read():
         with open(_path(job_id)) as f:
             return json.load(f)
+    try:
+        return _retry(read)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+
+def _retry(action, attempts=50, pause=0.02):
+    """Windows won't replace a file another thread has open (someone polling
+    the status as it's written): wait a moment and try again."""
+    for i in range(attempts):
+        try:
+            return action()
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(pause)
 
 
 def run_job(job_id, artist_id, options):

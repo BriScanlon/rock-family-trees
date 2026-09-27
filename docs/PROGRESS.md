@@ -1,6 +1,6 @@
 # Progress log
 
-Where the project stands, what was learned, and what's next. Open work is tracked in GitHub issues: #2 shop, #3 print-on-demand fulfilment, #4 routing and white space, #5 anecdotes.
+Where the project stands, what was learned, and what's next. Open work is tracked in GitHub issues: #2 shop, #3 print-on-demand fulfilment, #4 routing and white space, #5 anecdotes, #6 choosing bands and line-up detail.
 
 ## Status (end of first build session)
 
@@ -12,6 +12,82 @@ Working end to end: search → harvest → refine → fit to paper → layout �
   2. Search a real band, e.g. AC/DC, Deep Purple or Fleetwood Mac, at depth 2 then 3.
   3. Check instruments, dates, deaths and genres (for automatic lettering) come through from MusicBrainz, and that a second run is served from the cache (`api_calls` 0 in the job result).
   4. `python backend/tests/live_smoke.py`.
+
+## Status (first run on a real machine, 2026-09-26)
+
+All four checks above now pass on Windows 11 with Docker Desktop 29.8 and Python 3.11:
+- `pytest`: 42 passed.
+- `docker compose up --build`: backend in celery mode, worker connected to RabbitMQ, Neo4j healthy, frontend returns 200.
+- Real AC/DC at depth 2: 9 of 24 bands, 68 line-ups, 83 people on A0. Smallest text 7.6pt, names 14.7pt. Lettering chose `heavy` from genres. The first run made 55 MusicBrainz calls in 61s; the second came from the Neo4j cache in 0.5s with 0 calls. Neo4j then held 37 bands and 318 artists.
+- `live_smoke.py` (Iron Maiden, depth 2): completed with 10 bands, 52 line-ups, 60 people on A0, 58 API calls.
+- The real early AC/DC line-ups check out, including Evans to Scott and Larry Van Kriedt's return in 1975.
+
+Seen in the real posters, for issue #4: move lines take long detours round the outside, the right-centre of the sheet is largely empty, and bands with frequent side-player changes (Manfred Mann's Earth Band, Uriah Heep) take up about 40% of the AC/DC sheet. Some members have no instrument, apparently because MusicBrainz has none for them.
+
+Local gotcha: if other stacks already publish 7474/7687/15672, add a git-excluded `docker-compose.override.yml` that remaps rftg-neo4j and rftg-rabbitmq with `ports: !override`. The app doesn't need those host ports.
+
+## Frame's grid, and choosing what goes on it (2026-09-27)
+
+A Foo Fighters poster on A3 came out as one band, with the page largely empty. This session rebuilt the layout on Frame's own grid and changed how bands and line-ups are chosen. Design discussion: issue #6.
+
+**What the real posters show** (Faces 1979; Uriah Heep / Colosseum / Thin Lizzy 1979; Deep Purple; Black Sabbath / Ozzy):
+- Every musician takes the same width, so a line-up is exactly as wide as its members.
+- Line-ups of one era share a row, with names and bars level across the page.
+- The notes sit inside the block, under the band name. Our notes column beside each block was a misreading, and it cost about 3 members' width per band.
+- Each band keeps its columns, so lines drop straight.
+- Only significant changes are numbered. Minor ones are written under the member ("replaced by…").
+- Nothing is left blank: discographies and anecdotes fill the gaps.
+
+**The layout** (`grid.py`): the sheet at 6.5pt *is* the grid. On A2 with heavy lettering that's 49 half-member columns × 11 rows. Runs of line-ups are placed whole, in date order: below everything earlier in their columns, below where their musicians came from, near their era's row and the bands they share musicians with. When a later band pushes a source below its target, the placement repairs and re-places.
+
+**What goes on it** (`fitting.py`): more bands before more line-ups. Every band that fits at its simplest goes in, in ranking order; then detail is restored band by band. The root band takes at most 60% of the rows. Condensed line-ups say what they hide under the members ("then F. Stahl", "joined 1995") and in the notes ("Pat Smear rejoined in 2010.").
+
+**Ranking** (`refiner.py`, and the harvester's fetch budget): two-sided tenure, doubled for direct moves, reduced for side projects, founders as long-serving, undated memberships as nominal. Why Nirvana was missing: after a database wipe, the harvester's raw link count never fetched it (it tied with dozens of Grohl's minor projects). And once fetched, Grohl's broken MusicBrainz dates (Foo Fighters "1994-10 to 1994-10") made the link worth half a year.
+
+Bands shown at 6.5pt:
+
+| | A3 | A2 | A1 |
+|---|---|---|---|
+| Foo Fighters (real data), before | 1 | 1 | 5 |
+| Foo Fighters, now | 9 (incl. Nirvana) | 12 | 19 |
+| Yardbirds demo, before → now | 3 → 7 | 9 → 16 | 10 → 21 |
+| AC/DC demo, before → now | 1 → 11 | 11 → 14 | 9 → 17 (all) |
+
+Line-up blocks now use 55–82% of the grid on A3/A2/A1, against 14–23% of the drawing area before (not quite the same measure, but the same idea).
+
+Also fixed: the MusicBrainz rate limiter uses a monotonic clock, because Docker Desktop's VM clock drifted an hour and stepped backwards, and a job slept for the size of the step. And job status writes retry on Windows, where replacing a file another thread is reading fails with `WinError 5`.
+
+## Data quality, notes from Wikipedia, and filling the page (2026-09-27, later)
+
+**Data fixes found on real posters** (Deep Purple A1):
+- An undated MusicBrainz membership was stretched over the band's whole life. David Stone (Rainbow keyboards, 1977–78) appeared in every Rainbow line-up and hid the 1984–93 break. Undated members are now left out, and noted as "dates unknown", when at least half the band is dated. Founders and eponymous members keep the full span.
+- A band only counts as "still going" if a dated membership is still open.
+- Missing instruments are borrowed from the musician's other memberships.
+- Renamings are noted ("Renamed The Maze").
+- The instrument shown is the principal one (Gillan: vocals, not harmonica).
+
+**Notes from Wikipedia** (issues #5, #7; `app/wikipedia.py`, `app/narrative.py`):
+- MusicBrainz url-rels give the Wikidata item, which gives the article; the lead plus History section goes to a model with the band's line-ups.
+- It returns short dated notes, each with its source passage. Code checks the source is in the article, the note doesn't share 6 ordinary words with it (names and titles excepted), and a second pass confirms the source supports every claim.
+- **Model:** local Qwen3 14B through Ollama by default (`rftg-qwen3` in `ollama/Modelfile`: 40,960-token context, 15.7 GB, all in the RX 7900 XT's memory). On Windows Ollama runs natively, because Docker Desktop can't give a container an AMD GPU. Requests queue one at a time (a lock file on the shared data volume, plus `OLLAMA_NUM_PARALLEL=1`). Claude is the alternative (`NARRATIVE_BACKEND=anthropic`).
+- **Stored in Neo4j:** `(:Band)-[:HAS_NOTES]->(:NoteSet)-[:INCLUDES]->(:Note)`, dropped notes included with the reason. Keyed on prompt fingerprint, model, article revision and line-ups, so improving the prompt writes afresh while older writings stay. If Wikipedia or the model is unreachable, the latest stored notes are used.
+- Example: Mark II reads "Montreux fire inspires 'Smoke on the Water'; album recorded in hotel corridor".
+
+**Filling the page.** Measured as the share of the drawing area with no ink (tiles about 1/48 of the width). Frame's Faces and Uriah Heep trees score 2–3%.
+
+| Deep Purple A1 | Empty |
+|---|---|
+| Grid layout, notes for 8 bands | 58% |
+| + text panels (albums only) | 54% |
+| + 40 candidate bands, panels filled from several bands | 37–42% |
+| + albums placed with the line-up that recorded them, columns spread to the sheet's edges | 39% |
+
+The remaining gap is structural. The greedy placement can't revisit a choice, and the panels run out of material.
+
+**Next** (agreed with the user):
+1. **Content first:** build every candidate band's line-ups, notes, albums and links, stored in Neo4j, before any placement.
+2. **Then a placement optimiser** scoring coverage, content and chronology (issue #8).
+- Also: #6 band significance (Wikidata); Wikipedia member timelines (#7 stage 2) for Rainbow's missing 1990s line-ups; correct Grohl's Foo Fighters membership on MusicBrainz (needs the user's account).
 
 ## How the look was arrived at
 

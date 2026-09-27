@@ -28,7 +28,7 @@ GROUP_TYPES = {"Group", "Orchestra", "Choir"}
 
 # MusicBrainz allows one request per second per client, shared across threads.
 _rate_lock = threading.Lock()
-_last_call = [0.0]
+_last_call = [float("-inf")]
 
 
 class MusicBrainzError(Exception):
@@ -44,10 +44,13 @@ class MusicBrainzClient:
 
     def _wait(self):
         with _rate_lock:
-            elapsed = time.time() - _last_call[0]
+            # Monotonic, not wall-clock: if the clock steps backwards (Docker
+            # Desktop's VM clock does) the last call looks like it's in the
+            # future and the sleep below would last as long as the step.
+            elapsed = time.monotonic() - _last_call[0]
             if elapsed < self.min_interval:
                 time.sleep(self.min_interval - elapsed)
-            _last_call[0] = time.time()
+            _last_call[0] = time.monotonic()
 
     def _get(self, path, params):
         params = dict(params, fmt="json")
@@ -91,10 +94,22 @@ class MusicBrainzClient:
         return results
 
     def get_artist(self, mbid):
-        data = self._get(f"artist/{mbid}", {"inc": "artist-rels+genres"})
+        data = self._get(f"artist/{mbid}", {"inc": "artist-rels+genres+url-rels"})
         if data is None:
             return None
         return normalize_artist(data)
+
+    def get_albums(self, mbid):
+        """A band's studio albums, oldest first: ["1972 Machine Head", ...].
+        One search rather than paging through every release group (Deep
+        Purple has 412, mostly compilations)."""
+        query = f"arid:{mbid} AND primarytype:album AND NOT secondarytype:*"
+        data = self._get("release-group", {"query": query, "limit": 100}) or {}
+        albums = sorted({(rg.get("first-release-date") or "")[:4] + " " + rg["title"]
+                         for rg in data.get("release-groups", [])
+                         if rg.get("primary-type") == "Album" and not rg.get("secondary-types")
+                         and (rg.get("first-release-date") or "")[:4].isdigit()})
+        return albums
 
 
 def normalize_artist(data):
@@ -110,6 +125,11 @@ def normalize_artist(data):
         "ended": bool(ls.get("ended")),
         "genres": [g["name"] for g in sorted(data.get("genres") or [], key=lambda g: -(g.get("count") or 0))],
         "memberships": [],
+        # the artist's Wikidata item, if MusicBrainz links one ("" = looked, none);
+        # the way into Wikipedia for the notes (app/wikipedia.py)
+        "wikidata": next((rel["url"]["resource"].rstrip("/").rsplit("/", 1)[-1]
+                          for rel in data.get("relations", [])
+                          if rel.get("type") == "wikidata" and rel.get("url", {}).get("resource")), ""),
     }
     for rel in data.get("relations", []):
         if rel.get("type") != "member of band" or "artist" not in rel:

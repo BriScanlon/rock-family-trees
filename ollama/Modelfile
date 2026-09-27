@@ -1,0 +1,6 @@
+﻿# The model the notes are written with (app/narrative.py): Qwen3 14B with its full
+# native context, so a band's whole Wikipedia history fits in one request.
+# Build it:  ollama create rftg-qwen3 -f ollama/Modelfile
+FROM qwen3:14b
+PARAMETER num_ctx 40960
+PARAMETER temperature 0.3

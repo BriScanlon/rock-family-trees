@@ -39,7 +39,7 @@ class SearchResult(BaseModel):
 class GenerationRequest(BaseModel):
     artist_id: str
     depth: int = Field(2, ge=1, le=4)
-    max_bands: int = Field(24, ge=1, le=60)
+    max_bands: int = Field(40, ge=1, le=60)
     title: Optional[str] = Field(None, max_length=120)
     subtitle: Optional[str] = Field(None, max_length=200)
     paper: str = Field("auto", pattern="^(auto|A0|A1|A2|A3|A4|none)$")
@@ -48,6 +48,7 @@ class GenerationRequest(BaseModel):
     aged_paper: bool = False
     lettering: str = Field("auto", pattern="^(auto|classic|heavy)$")
     timeline: bool = False
+    notes: bool = True  # notes written from Wikipedia (app/narrative.py)
     refresh: bool = False
     detail_level: Optional[int] = None  # accepted for backwards compatibility; unused
 

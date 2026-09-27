@@ -10,6 +10,7 @@ BAND_JSON = {
          "ended": True, "attributes": ["original", "lead vocals"],
          "artist": {"id": "ian", "name": "Ian Curtis", "type": "Person"}},
         {"type": "producer", "direction": "backward", "artist": {"id": "x", "name": "Martin Hannett"}},
+        {"type": "wikidata", "direction": "forward", "url": {"resource": "https://www.wikidata.org/wiki/Q101505"}},
     ],
 }
 PERSON_JSON = {
@@ -30,6 +31,12 @@ def test_normalize_band_keeps_only_memberships():
     assert (m["person_id"], m["band_id"], m["attributes"]) == ("ian", "jd", ["original", "lead vocals"])
     assert is_group(rec)
     assert rec["genres"] == ["post-punk", "gothic rock"]
+
+
+def test_normalize_keeps_the_wikidata_link():
+    # the way into Wikipedia for the notes; "" means MusicBrainz has none
+    assert normalize_artist(BAND_JSON)["wikidata"] == "Q101505"
+    assert normalize_artist(PERSON_JSON)["wikidata"] == ""
 
 
 def test_normalize_person_direction():
@@ -84,5 +91,5 @@ def test_client_search_and_retry(monkeypatch):
     assert results[0]["years"] == "1976–1980" and results[0]["country"] == "GB"
     assert client.get_artist("jd")["memberships"][0]["person_name"] == "Ian Curtis"
     assert client.get_artist("missing") is None
-    assert session.requests[2][1] == {"inc": "artist-rels+genres", "fmt": "json"}
+    assert session.requests[2][1] == {"inc": "artist-rels+genres+url-rels", "fmt": "json"}
     assert "User-Agent" in session.headers

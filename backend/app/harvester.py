@@ -9,8 +9,33 @@ Every record is served from the store when cached; only misses hit
 MusicBrainz. A fetch budget keeps deep trees from exploding.
 """
 from collections import Counter
+from datetime import date
 
 from app.musicbrainz import MusicBrainzClient, is_group
+
+FOUNDER_YEARS = 10  # a founder counts as this long-serving, whatever their dates say
+MIN_WEIGHT = 0.5    # an undated or very brief member still links a little
+
+
+def _year(s):
+    try:
+        parts = (s or "").split("-")
+        return int(parts[0]) + (int(parts[1]) - 1) / 12 if len(parts) > 1 else int(parts[0])
+    except ValueError:
+        return None
+
+
+def _tenure(m):
+    """Years a membership lasted (undated ends: until now), with founders at
+    least FOUNDER_YEARS: MusicBrainz sometimes closes a founder's membership
+    by mistake (Dave Grohl, Foo Fighters, "1994-10 to 1994-10")."""
+    start, end = _year(m.get("begin")), _year(m.get("end"))
+    if end is None and not m.get("ended"):
+        end = date.today().year
+    years = (end - start) if start is not None and end is not None else 0.0
+    if "original" in [(a or "").lower() for a in m.get("attributes") or []]:
+        years = max(years, FOUNDER_YEARS)
+    return max(years, 0.0)
 
 
 class Harvester:
@@ -86,9 +111,13 @@ class Harvester:
 
             # 2. Fetch their members (death dates, and other bands for the next generation)
             people = []
+            weight = Counter()  # how much each member mattered to this generation's bands
             for rec in fetched:
                 for m in rec["memberships"]:
-                    if m["band_id"] == rec["mbid"] and m["person_id"] not in seen_people:
+                    if m["band_id"] != rec["mbid"]:
+                        continue
+                    weight[m["person_id"]] += _tenure(m)
+                    if m["person_id"] not in seen_people:
                         seen_people.add(m["person_id"])
                         people.append(m["person_id"])
             people = people[:max(0, max_people - len(seen_people) + len(people))]
@@ -102,7 +131,9 @@ class Harvester:
                     continue
                 for m in prec["memberships"]:
                     if m["person_id"] == pid and m["band_id"] not in levels:
-                        links[m["band_id"]] += 1
+                        # a band reached through a founder or a long-serving member
+                        # matters more than one reached through a stand-in
+                        links[m["band_id"]] += max(weight[pid], MIN_WEIGHT)
 
             if last_level:
                 break
