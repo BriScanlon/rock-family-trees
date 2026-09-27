@@ -28,7 +28,7 @@ GROUP_TYPES = {"Group", "Orchestra", "Choir"}
 
 # MusicBrainz allows one request per second per client, shared across threads.
 _rate_lock = threading.Lock()
-_last_call = [0.0]
+_last_call = [float("-inf")]
 
 
 class MusicBrainzError(Exception):
@@ -44,10 +44,13 @@ class MusicBrainzClient:
 
     def _wait(self):
         with _rate_lock:
-            elapsed = time.time() - _last_call[0]
+            # Monotonic, not wall-clock: if the clock steps backwards (Docker
+            # Desktop's VM clock does) the last call looks like it's in the
+            # future and the sleep below would last as long as the step.
+            elapsed = time.monotonic() - _last_call[0]
             if elapsed < self.min_interval:
                 time.sleep(self.min_interval - elapsed)
-            _last_call[0] = time.time()
+            _last_call[0] = time.monotonic()
 
     def _get(self, path, params):
         params = dict(params, fmt="json")
