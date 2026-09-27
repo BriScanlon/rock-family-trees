@@ -56,14 +56,18 @@ def gather_stories(harvester, harvest, opts, progress):
             article = wiki.article(wiki.title_for(record.get("wikidata")))
             if article:
                 out[band.id] = narrative.write_notes(band, article, store=harvester.store)["notes"]
+            else:
+                out[band.id] = []
         except Exception as e:
             # Wikipedia or the model out of reach: recall the band's last notes, if any
             recalled = harvester.store.latest_notes(band.id)
+            out[band.id] = recalled["notes"] if recalled else []
             if recalled and recalled.get("notes"):
-                out[band.id] = recalled["notes"]
                 print(f"Recalled stored notes for {band.name} ({type(e).__name__}: {e})")
             else:
                 print(f"No notes for {band.name}: {type(e).__name__}: {e}")
+        # corrections by hand have the last word: added notes first, rejected ones never
+        out[band.id] = narrative.final_notes(harvester.store, band.id, out.get(band.id, []))
     return out
 
 

@@ -188,3 +188,19 @@ def test_new_prompts_write_afresh_and_the_old_notes_stay(store, monkeypatch):
 def test_notes_start_with_a_capital():
     kept, _ = narrative.check([dict(GOOD, text="able sacked for declining the Japanese tour.")], ARTICLE["text"])
     assert kept[0]["text"].startswith("Able")
+
+
+def test_corrections_by_hand_have_the_last_word(store):
+    # a person can add a note (shown first) and reject a generated one for good,
+    # even after the notes are rewritten
+    fake = FakeClaude([GOOD])
+    generated = narrative.write_notes(band(), ARTICLE, client=fake)["notes"]
+    narrative.add_note(store, "x", "1971", "Played the Leeds Poly union bar every Friday.")
+    narrative.reject_note(store, "x", "Able sacked")
+    shown = narrative.final_notes(store, "x", generated)
+    assert [n["text"] for n in shown] == ["Played the Leeds Poly union bar every Friday."]
+    assert shown[0]["year"] == 1971.5 and shown[0]["source"] == "added by hand"
+    assert store.latest_notes("x")["model"] != narrative.CURATOR  # recall never picks the hand-made set
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        narrative.add_note(store, "x", "the seventies", "Undated.")
