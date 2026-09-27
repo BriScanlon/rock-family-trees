@@ -158,8 +158,10 @@ def test_events_sit_in_free_space_beside_their_line_up():
         for b in L["boxes"]:  # never over a line-up
             assert not (e["x"] < b["x"] + b["w"] and b["x"] < e["x"] + e["w"] and
                         e["y"] < b["y"] + b["h"] and b["y"] < e["y"] + e["h"]), b["id"]
-        for line in L["trunks"] + L["edges"]:  # nor over a musician's line
+        for line in L["trunks"] + L["edges"]:  # nor over a musician's line, bar a long drop (it passes behind the text)
             for (ax, ay), (bx, by) in zip(line["points"], line["points"][1:]):
+                if ax == bx and abs(by - ay) > L["grid"]["row_h"]:
+                    continue
                 assert not (min(ax, bx) < e["x"] + e["w"] and e["x"] < max(ax, bx) and
                             min(ay, by) < e["y"] + e["h"] and e["y"] < max(ay, by))
         box = next(b for b in L["boxes"] if b["id"] == e["lineup"])

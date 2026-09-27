@@ -215,12 +215,13 @@ class Artist:
             self._add(f'<rect x="{e["x"]:.1f}" y="{e["y"]:.1f}" width="{e["w"]:.1f}" height="{e["h"]:.1f}" '
                       f'rx="6" fill="none" stroke="{INK}" stroke-width="1"/>')
             tx, ty = e["x"] + EVENT_INSET, e["y"] + EVENT_INSET
+            k = e.get("scale", 1.0)  # floating notes print larger than a block's
             top = 0
             if e.get("heading"):
-                self._text(tx, ty + DATE_SIZE, e["heading"], DATE_SIZE, bold=True, fit=e["w"] - 2 * EVENT_INSET)
-                top = NOTE_LINE
+                self._text(tx, ty + DATE_SIZE * k, e["heading"], DATE_SIZE * k, bold=True, fit=e["w"] - 2 * EVENT_INSET, halo=True)
+                top = NOTE_LINE * k
             for i, line in enumerate(e["lines"]):
-                self._text(tx, ty + NOTE_SIZE + top + i * NOTE_LINE, line, NOTE_SIZE)
+                self._text(tx, ty + NOTE_SIZE * k + top + i * NOTE_LINE * k, line, NOTE_SIZE * k, halo=True)
             if e.get("tie"):  # along the row, and down a column where the note is in another row
                 pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in e["tie"])
                 self._add(f'<polyline points="{pts}" fill="none" stroke="{INK}" stroke-width="1.2" '

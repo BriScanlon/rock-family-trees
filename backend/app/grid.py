@@ -30,6 +30,7 @@ CAREERS = 12            # a band's longest-serving members whose other bands (of
 EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
 EVENT_PAD = 10          # margin inside an event block's cells
 NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
+FLOAT_SCALE = 1.4       # floating notes print larger than a block's: Frame lettered his asides big
 SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
                         # its own pace (the user chose this over rows level across the page)
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
@@ -590,6 +591,8 @@ class GridLayout(Cartographer):
         for line in list(trunks) + list(edges):
             pts = line["points"]
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                if ax == bx and abs(by - ay) > self.pitch:  # a long drop may pass behind a note, as behind a block's
+                    continue
                 lx, hx, ly, hy = min(ax, bx) - 6, max(ax, bx) + 6, min(ay, by) - 6, max(ay, by) + 6
                 for t in rows:
                     if not (ly < row_y(t + 1) and row_y(t) < hy):
@@ -645,7 +648,7 @@ class GridLayout(Cartographer):
             if spot is None:
                 continue
             t, c, w, lines, path_cells, tie = spot
-            k_rows = math.ceil((NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / (self.pitch / SUB))
+            k_rows = math.ceil((NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / (self.pitch / SUB))
             for i in range(k_rows):
                 for k in range(c, c + w):
                     free.discard((t + i, k))
@@ -654,10 +657,10 @@ class GridLayout(Cartographer):
                 free.discard(cell)
             x, y = self._col_x(c) + EVENT_PAD / 2, row_y(t) + EVENT_PAD / 2
             ew = self._col_x(c + w) - self._col_x(c) - EVENT_PAD
-            eh = NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD
+            eh = NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD
             placed.append({"band_id": band.id, "lineup": box["id"], "year": n["year"], "kind": n["kind"],
                            "x": x, "y": y, "w": ew, "h": eh, "heading": n["heading"], "lines": lines,
-                           "significance": n.get("significance"), "tie": tie})
+                           "significance": n.get("significance"), "tie": tie, "scale": FLOAT_SCALE})
             told[band.id].append(n["text"])
         return placed
 
@@ -680,10 +683,10 @@ class GridLayout(Cartographer):
                 continue
             for w in EVENT_WIDTHS:
                 text_w = self._col_x(w) - self._col_x(0) - 2 * EVENT_PAD
-                lines = wrap(n["text"], HAND, NOTE_SIZE, text_w)
-                if n["heading"] and text_width(n["heading"], HAND, DATE_SIZE) > text_w:
+                lines = wrap(n["text"], HAND, NOTE_SIZE * FLOAT_SCALE, text_w)
+                if n["heading"] and text_width(n["heading"], HAND, DATE_SIZE * FLOAT_SCALE) > text_w:
                     continue
-                k_rows = math.ceil((NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / sub_h)
+                k_rows = math.ceil((NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / sub_h)
                 if k_rows > 2 * SUB or any(t + i not in row_set for i in range(k_rows)):
                     continue
                 for c in range(c_lo, c_hi - w + 1):
