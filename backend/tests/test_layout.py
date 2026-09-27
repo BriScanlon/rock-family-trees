@@ -326,7 +326,6 @@ def test_albums_go_with_the_line_up_that_made_them():
     albums = {"demo:yardbirds": ["1966-07-15 Roger the Engineer", "1967-07-24 Little Games"]}
     tree, L, fit = fit_tree(harvest, paper="A1", albums=albums)
     yb = tree.bands["demo:yardbirds"]
-    panels = " ".join(line for p in L.get("panels", []) for sec in p["sections"] for line in sec["lines"])
     for album in albums["demo:yardbirds"]:
         title = album.split(" ", 1)[1]
         target = lineup_for(yb.lineups, album_time(album))
@@ -334,7 +333,6 @@ def test_albums_go_with_the_line_up_that_made_them():
         assert title in " ".join(box["notes"]), title  # in the block of the line-up that made it
         others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
         assert not any(title in " ".join(b["notes"]) for b in others)
-        assert title not in panels  # never a list apart
 
 
 def test_the_release_date_decides_the_line_up():
@@ -382,3 +380,49 @@ def test_a_departure_track_sits_above_an_arrival_in_the_same_column():
     assert leave < arrive  # the leaving line's drop ends above where the arriving one's begins
     crowded = [t.take("row", 300, 400) for _ in range(len(t.offsets))]
     assert len(set(crowded)) == len(t.offsets)  # each run its own track while there are tracks
+
+
+def test_info_notes_attach_to_the_band_and_time_they_belong_to():
+    """Where a musician played off the poster, and a band's style, are notes
+    in the line-ups (the user's instruction), not a panel of lists."""
+    from app.fitting import fit_tree
+    from app.grid import GridLayout
+    from app.narrative import lineup_for
+    harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=4)
+    tree, L, _ = fit_tree(harvest, paper="A2", max_bands=24)
+    assert "panels" not in L
+    grid = GridLayout(tree, paper="A2")
+    grid._prepare()
+    on_poster = {b.name for b in tree.bands.values()}
+    seen = set()
+    for band_id, notes in grid.info.items():
+        band = tree.bands[band_id]
+        for n in notes:
+            if n["text"].startswith("Style:"):
+                assert lineup_for(band.lineups, n["year"]) is band.lineups[0]
+                continue
+            for other in on_poster:
+                assert f" {other} (" not in n["text"]  # a move on the poster is a line, not words
+            assert n["text"] not in seen  # each told once
+            seen.add(n["text"])
+            who = next(p for p in tree.people.values() if n["text"].startswith(p.name + " "))
+            stints = [s for s in band.stints if s.person_id == who.id]
+            if " went on to " in n["text"]:  # on their last line-up in the band
+                assert abs(n["year"] - (max(s.end for s in stints) - 0.01)) < 1e-6
+            elif " previously with " in n["text"]:
+                assert n["year"] == min(s.start for s in stints)
+            else:  # joined while a member
+                assert any(s.start <= n["year"] < s.end for s in stints)
+
+
+def test_a_musicians_other_bands_are_one_sentence_per_line_up():
+    from app.grid import GridLayout
+    from app.refiner import Band, FamilyTree, Lineup, LineupMember, Person, Stint
+    stint = Stint(person_id="p", name="Dave LaRue", start=1990, end=2020, roles=["bass"])
+    lu = Lineup(number=1, start=1990, end=2020, start_label="1990", end_label="2020", members=[LineupMember(person_id="p", name="Dave LaRue", roles=["bass"])])
+    band = Band(id="b", name="Dregs", level=0, start=1990, end=2020, stints=[stint], lineups=[lu])
+    person = Person(id="p", name="Dave LaRue", joined={"Dregs": 1990, "Trio": 2003, "Colours": 2011})
+    tree = FamilyTree(root_id="b", root_name="Dregs", title="T", bands={"b": band}, people={"p": person})
+    grid = GridLayout(tree, paper=None)
+    notes = [n["text"] for n in grid._info_notes().get("b", [])]
+    assert notes == ["Dave LaRue also with Trio (2003), Colours (2011)."]
