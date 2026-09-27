@@ -48,6 +48,7 @@ class GenerationRequest(BaseModel):
     aged_paper: bool = False
     lettering: str = Field("auto", pattern="^(auto|classic|heavy)$")
     timeline: bool = False
+    notes: bool = True  # notes written from Wikipedia (app/narrative.py)
     refresh: bool = False
     detail_level: Optional[int] = None  # accepted for backwards compatibility; unused
 
