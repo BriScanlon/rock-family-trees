@@ -40,6 +40,7 @@ PACK_REPAIRS = 40       # rounds of re-placing to turn upward moves downwards
 MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the sheet's edges
 MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
 MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
+HINT_WEIGHT = 0.2       # pull (per column) towards a band's preferred column, when the optimiser gives one
 ERA_WEIGHT = 1.5        # pull towards the row where line-ups of the same date sit
 TOP_WEIGHT = 0.3        # pull towards the top: keep the tree compact
 NEAR_WEIGHT = 0.08      # pull (per column) towards bands sharing musicians
@@ -136,7 +137,7 @@ def coverage(layout):
 
 class GridLayout(Cartographer):
     def __init__(self, tree, paper="auto", subtitle=None, lettering="classic", cols=None, rows=None,
-                 weights=None, mirror=False):
+                 weights=None, mirror=False, hints=None, scale=1.0):
         super().__init__(tree, paper=paper, subtitle=subtitle, timeline=False, lettering=lettering)
         self.slot, self.title_h, self.bar_dy, self.block_h = _dims(self.ls)
         self.unit = self.slot / 2
@@ -146,15 +147,18 @@ class GridLayout(Cartographer):
         # the fitting tries several and keeps the fullest page
         self.era_w, self.top_w, self.near_w = weights or (ERA_WEIGHT, TOP_WEIGHT, NEAR_WEIGHT)
         self.mirror = mirror
+        self.hints = hints or {}  # band id -> preferred column (the optimiser moves bands about with these)
+        self.scale = scale        # text size, as a multiple of the smallest readable
 
     # ------------------------------------------------------------------
     @staticmethod
-    def sheet(paper, lettering_style):
-        """The sheet at the smallest readable print size: (cols, rows, width px, height px),
-        in whichever orientation holds more."""
+    def sheet(paper, lettering_style, scale=1.0):
+        """The sheet with the smallest text printing at MIN_PRINT_PT x scale:
+        (cols, rows, width px, height px), in whichever orientation holds more.
+        A larger scale means larger text, so fewer columns and rows."""
         slot, _, _, block_h = _dims(lettering_style)
         unit, row_h = slot / 2, block_h + CHANNEL
-        px_per_mm = min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE) / (MIN_PRINT_PT * 25.4 / 72)
+        px_per_mm = min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE) / (MIN_PRINT_PT * scale * 25.4 / 72)
         short, long_ = PAPER_MM[paper]
         best = None
         for w_mm, h_mm in ((short, long_), (long_, short)):
@@ -370,8 +374,10 @@ class GridLayout(Cartographer):
                 era = sum(abs(r - e) for r, e in zip(rows, era_rows)) / len(rows)
                 near = sum(k * abs(c0 - c) for c, k in links) / max(1, sum(k for _, k in links))
                 near += 3 * min((abs(c0 - c) for c in own), default=0)  # a re-formed band returns to its columns
+                hint = self.hints.get(u["band"].id)
                 cost = ((rows[-1] - rows[0]) + self.top_w * rows[0] + self.era_w * era
-                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0))
+                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0)
+                        + (HINT_WEIGHT * abs(c0 - hint) if hint is not None else 0.0))
                 if best is None or cost < best[0]:
                     best = (cost, c0, rows)
             if best is None:
@@ -518,7 +524,7 @@ class GridLayout(Cartographer):
         return self.x0 + c * self.unit * self.hs
 
     def _sheet_px(self):
-        cols, rows, W, H = GridLayout.sheet(self.paper, self.ls)
+        cols, rows, W, H = GridLayout.sheet(self.paper, self.ls, self.scale)
         return W, H
 
     # ------------------------------------------------------------------

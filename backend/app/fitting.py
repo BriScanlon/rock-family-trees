@@ -137,12 +137,16 @@ def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, le
     return _fit_trees(trees, paper, timeline, lettering, **layout_kw)
 
 
-def fit_content(content, paper="auto", timeline=False, **layout_kw):
-    """The placement, from finished content (app/content.py): it only reads."""
-    return _fit_trees(content.trees, paper, timeline, content.lettering, **layout_kw)
+def fit_content(content, paper="auto", timeline=False, optimise_seconds=None, **layout_kw):
+    """The placement, from finished content (app/content.py): it only reads.
+    On a sheet too small for everything, the greedy choice is then improved
+    by the placement optimiser (app/optimise.py) for `optimise_seconds`."""
+    from app.optimise import OPTIMISE_SECONDS
+    seconds = OPTIMISE_SECONDS if optimise_seconds is None else optimise_seconds
+    return _fit_trees(content.trees, paper, timeline, content.lettering, optimise_seconds=seconds, **layout_kw)
 
 
-def _fit_trees(trees, paper, timeline, lettering, **layout_kw):
+def _fit_trees(trees, paper, timeline, lettering, optimise_seconds=0, **layout_kw):
     full = trees[LINEUP_CAPS[0]]
     if not full.bands:
         return full, None, {}
@@ -176,6 +180,11 @@ def _fit_trees(trees, paper, timeline, lettering, **layout_kw):
     if chosen is None:  # even the root band alone is too big: draw it anyway, as small as it must be
         tree = _subset(trees[LINEUP_CAPS[-1]], 1)
         return result(tree, GridLayout(tree, paper=paper, lettering=lettering, **layout_kw).layout())
+    if optimise_seconds > 0:
+        from app.optimise import optimise
+        tree, layout, score = optimise(trees, paper, lettering, chosen, optimise_seconds, **layout_kw)
+        tree, layout, fit = result(tree, layout)
+        return tree, layout, dict(fit, placement=score)
     tree = _compose(trees, chosen)
     return result(tree, _fullest(tree, paper, lettering, **layout_kw))
 

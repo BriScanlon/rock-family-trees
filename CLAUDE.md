@@ -5,7 +5,7 @@ Generates printable posters in the style of **Pete Frame's Rock Family Trees** f
 ## Run and test
 
 ```bash
-cd backend && pip install -r requirements-dev.txt && pytest          # ~60 tests, no network needed
+cd backend && pip install -r requirements-dev.txt && pytest          # ~90 tests, no network needed
 uvicorn main:app --port 8000                                          # inline jobs + JSON file cache
 cd frontend && npm install && npm run dev                              # http://localhost:3000, proxies /api
 python backend/tests/live_smoke.py http://localhost:8000               # needs real MusicBrainz access
@@ -41,7 +41,7 @@ Render an SVG from the command line: `cd backend && python -c "from app.pipeline
 - **The model is local by default:** Qwen3 14B through Ollama on the user's RX 7900 XT (20 GB). The model is `rftg-qwen3`, built from `ollama/Modelfile` with a 40,960-token context; the user wants a high context size. On Windows Ollama runs natively (Docker Desktop can't give a container an AMD GPU); containers reach it at `host.docker.internal:11434`. **One request at a time** (lock file on the data volume plus `OLLAMA_NUM_PARALLEL=1`). The LAN server at 192.168.4.118 has only 6 GB of VRAM, so it isn't used.
 - **Albums go with the line-up that recorded them** ("Recorded Burn (1974), ..."), never as one list (the user's instruction). Studio albums come from one MusicBrainz search per band and are stored on the band record.
 - **Fill the page** as Frame did (his trees are 2-3% blank): text panels in the gaps hold the notes blocks had no room for and where musicians went off this poster. The user allows rearranging bands and enlarging the text to fill space. Measure white space on the rendered PNG (share of empty tiles), not by eye.
-- **Content first, then placement** (the user's instruction, issue #8): build every candidate band's line-ups, notes, albums and links before trying placements, then optimise placement for chronology, page coverage and content together.
+- **Content first, then placement** (the user's instruction, issue #8): build every candidate band's line-ups, notes, albums and links before trying placements, then optimise placement for chronology, page coverage and content together. The optimiser (`optimise.py`, simulated annealing from the greedy fit, `OPTIMISE_SECONDS`) may add bands, change detail, move bands and enlarge text, but **never drops a band the greedy ranking chose**.
 - Every generated SVG is self-contained: fonts are embedded as data URIs, and only the faces in use are included.
 - Job status is shared through JSON files in `ARTIFACT_DIR`, not a Celery result backend.
 

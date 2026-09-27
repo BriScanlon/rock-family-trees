@@ -89,6 +89,26 @@ The remaining gap is structural. The greedy placement can't revisit a choice, an
 2. **Then a placement optimiser** scoring coverage, content and chronology (issue #8).
 - Also: #6 band significance (Wikidata); Wikipedia member timelines (#7 stage 2) for Rainbow's missing 1990s line-ups; correct Grohl's Foo Fighters membership on MusicBrainz (needs the user's account).
 
+## The placement optimiser (issue #8 stage 2, 2026-09-27)
+
+`app/optimise.py` starts from the greedy fitting and runs simulated annealing for `OPTIMISE_SECONDS` (default 60). It varies:
+- bands added beyond greedy's,
+- each band's level of detail,
+- a preferred column per band (`GridLayout(hints=...)`),
+- the placement pulls and mirroring,
+- the text scale, from 1.0 to 1.3× the smallest readable size.
+
+The score is coverage + 0.35 content (rank-weighted bands) + 0.15 line-up detail + 0.1 notes shown − 0.5 chronology error (the distance from a straight time-to-row fit) + 0.15 × the text scale above 1.0.
+
+The packer still enforces every hard rule. The **greedy choice's bands are always kept**: the first run swapped Gillan and The Artwoods for Hollywood Monsters and The Javelins because that filled the page better, which overturns the ranking.
+
+Deep Purple A1 (40 candidate bands, 240 line-ups, 162 notes):
+- greedy: 22 bands, 59 line-ups, 40% empty tiles;
+- optimised for 60s: 22 bands, 61 line-ups, 38% empty (about 1,000 layouts tried);
+- with swaps allowed: 25 bands, 34% empty, but ranked bands lost.
+
+Most of the remaining white space is beside blocks within a row. Next steps are to widen blocks sideways into free columns, which is issue #4 territory, and to speed up the packer so more layouts can be tried.
+
 ## How the look was arrived at
 
 1. First pass: boxed line-ups on aged paper with a Western title font. Research found Frame's trees are black ink on white, in precise architectural hand lettering (he trained as a surveyor/architect), with many handwritten notes. Sources: Eye Magazine "Branches and roots" (issue 78, 2010), Wikipedia, and interviews. Most pages couldn't be fetched from the sandbox, only searched.

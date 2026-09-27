@@ -34,5 +34,5 @@ def test_the_placement_only_reads_the_content(monkeypatch):
 
     monkeypatch.setattr(H.Harvester, "fetch", no_fetching)
     monkeypatch.setattr(H.Harvester, "harvest", no_fetching)
-    tree, layout, fit = fit_content(content, paper="A2")
+    tree, layout, fit = fit_content(content, paper="A2", optimise_seconds=1)
     assert tree.bands and layout["boxes"] and fit["bands_shown"] <= content.summary()["bands"]
