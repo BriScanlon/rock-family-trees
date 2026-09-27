@@ -203,3 +203,10 @@ def test_a_fact_from_the_next_sentence_still_counts():
 def test_a_made_up_source_is_not_repaired(store):
     got = events.write_events(band(), WORK, ARTICLE, client=FakeModel([INVENTED]))
     assert got["notes"] == []
+
+
+def test_an_event_dated_to_month_zero_still_draws():
+    odd = {"date": "1966-00", "year": 1966.4, "significance": 5, "subject": "X",
+           "text": "Played a club so small the drummer set up in the car park outside."}
+    tree, L = _layout_with_events([odd])
+    assert all("1966" in e["heading"] for e in L["events"])
