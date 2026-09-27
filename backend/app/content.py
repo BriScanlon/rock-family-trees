@@ -10,9 +10,11 @@ line-ups (the links the lines draw). The placement (app/fitting.py, and the
 optimiser to come) only reads this: it never fetches, writes or ranks.
 """
 import os
+import re
 from dataclasses import dataclass, field
 
 from app.fonts import STYLES, lettering_for
+from app.musicbrainz import is_group
 from app.refiner import Refiner
 
 LINEUP_CAPS = (20, 12, 8, 5, 3)   # line-ups kept per band at each level of detail, fullest first
@@ -60,6 +62,7 @@ def build_content(artist_id, opts, progress=None, harvester=None):
         progress=lambda frac, msg: progress(5 + int(frac * 55), msg),
     )
     gather_standing(harvester, harvest, progress)  # before any ranking: it counts towards it
+    gather_charts(harvester, harvest, progress)    # before any line-ups: it corrects them
     stories = gather_stories(harvester, harvest, opts, progress) if opts["notes"] else {}
     albums = gather_albums(harvester, harvest, opts, progress)
     trees = build_trees(harvest, opts["max_bands"], opts.get("title"), stories, albums)
@@ -135,6 +138,42 @@ def gather_standing(harvester, harvest, progress):
         return
     for record in todo:
         record["sitelinks"] = counts.get(record.get("wikidata"), 0) if record.get("wikidata") else 0
+        harvester.store.put(record)
+
+
+def gather_charts(harvester, harvest, progress):
+    """Each candidate band's Wikipedia member chart (app/charts.py), from its
+    "List of ... members" page or its article, kept on its record (Neo4j)
+    beside the MusicBrainz memberships: [] where there is none. Looked up once
+    per band; the refiner applies it."""
+    if harvest["root_id"].startswith("demo:"):
+        return
+    from app.charts import chart_members, find_timeline
+    from app.wikipedia import WikipediaClient
+    records = harvest["records"]
+    todo = [records[b] for b in harvest.get("band_levels", {})
+            if b in records and is_group(records[b]) and records[b].get("chart") is None]
+    if not todo:
+        return
+    wiki = WikipediaClient()
+    for i, record in enumerate(todo):
+        progress(59, f"Checking {record['name']}'s members against Wikipedia ({i + 1} of {len(todo)})")
+        try:
+            title = wiki.title_for(record.get("wikidata"))
+            chart, source = [], None
+            if title:
+                base = re.sub(r"\s*\([^)]*\)$", "", title)
+                for page in dict.fromkeys([f"List of {title} members", f"List of {base} members", title]):
+                    got = wiki.wikitext(page)
+                    timeline = find_timeline(got["text"]) if got else None
+                    if timeline:
+                        chart = chart_members(timeline)
+                        source = f"{got['title']}@{got['revision']}"
+                        break
+        except Exception as e:  # a correction: go without it this time, try again next time
+            print(f"No member chart for {record['name']}: {type(e).__name__}: {e}")
+            continue
+        record["chart"], record["chart_source"] = chart, source
         harvester.store.put(record)
 
 

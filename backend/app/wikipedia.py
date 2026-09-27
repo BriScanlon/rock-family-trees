@@ -76,3 +76,18 @@ class WikipediaClient:
             return None
         return {"title": page.get("title", title), "text": page["extract"],
                 "revision": page.get("lastrevid"), "url": page.get("fullurl")}
+
+    def wikitext(self, title):
+        """{"title", "text", "revision"}: an article's source (for its member
+        chart), following redirects, or None."""
+        if not title:
+            return None
+        try:
+            data = self._get(WIKIPEDIA_API, {"action": "parse", "prop": "wikitext|revid", "redirects": 1,
+                                             "page": title})
+        except requests.HTTPError:
+            return None
+        parse = data.get("parse")
+        if not parse or "error" in data:
+            return None
+        return {"title": parse.get("title", title), "text": parse.get("wikitext") or "", "revision": parse.get("revid")}

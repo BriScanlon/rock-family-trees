@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
+from app.charts import apply_chart
 from app.musicbrainz import is_group
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -160,7 +161,11 @@ class Refiner:
         self.today = today or now_year()
 
     def build(self, harvest, title=None):
-        records = harvest["records"]
+        # Wikipedia's member chart, where the band has one, in place of
+        # MusicBrainz's memberships for the members it lists (app/charts.py)
+        records = {k: dict(r, memberships=apply_chart(r["memberships"], r["chart"], r["mbid"], r["name"]))
+                   if r.get("chart") and is_group(r) else r
+                   for k, r in harvest["records"].items()}
         levels = harvest.get("band_levels", {})
 
         people = {}
