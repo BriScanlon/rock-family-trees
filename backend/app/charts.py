@@ -12,11 +12,12 @@ source can be corrected on its own.
 Facts (who played what, when) aren't copyright; the chart is used as data,
 never reproduced.
 """
+import html
 import re
 import unicodedata
 from datetime import date
 
-PARSER = "charts-2"  # stored with each chart: one read by an older parser is read again
+PARSER = "charts-5"  # stored with each chart: one read by an older parser is read again
 MIN_DAYS = 30    # shorter than this is a stand-in or a slip (Blackmore "rejoined" 12-13 Aug 2026);
                  # Dale Crover's 43 days in Nirvana (a demo and shows, 1988) count
 JOIN_DAYS = 31   # stints closer than this are one stint (a change of instrument, not a departure)
@@ -49,10 +50,15 @@ def find_timeline(wikitext):
 
 
 def _fields(line):
-    """'bar:Ian from:05/07/1969 till:end text:"Ian Gillan"' -> {bar, from, till, text}."""
+    """'bar:Ian from:05/07/1969 till:end text:"Ian Gillan"' -> {bar, from, till, text}.
+    A text may be unquoted and run to the next key (Whitesnake's chart:
+    'text:David Coverdale'), else it's cut to "David" and matches no one."""
     out = {}
     for key, quoted, plain in re.findall(r'(\w+):\s*(?:"([^"]*)"|(\S*))', line):
         out[key.lower()] = quoted if quoted else plain
+    unquoted = re.search(r'\btext:\s*(?!")(.+?)(?=\s+\w+:|$)', line)
+    if unquoted:
+        out["text"] = unquoted.group(1).strip()
     return out
 
 
@@ -117,7 +123,7 @@ def parse_timeline(source, today=None):
             roles[f["id"]] = f["legend"].replace("_", " ").strip().lower()  # "bass, occasional vocals"
         elif section == "bardata" and "bar" in f:
             name = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", f.get("text") or f["bar"])
-            bars[f["bar"]] = re.sub(r"<[^>]+>|'''?", "", name).strip()
+            bars[f["bar"]] = _clean_name(name)
         elif section == "plotdata":
             if "width" in f and "bar" not in f and default_width is None:
                 default_width = _num(f["width"])
@@ -132,14 +138,32 @@ def parse_timeline(source, today=None):
     out = {}
     for bar, start, end, col, w in plots:
         role = roles.get(col)
-        if not role or role in ("studio album", "studio albums", "bars", "album"):
+        if not _instrument(role):  # a band-era bar (Gillan's chart), touring or session work, releases
             continue
         s, e = _date(start, fmt, period, today), _date(end, fmt, period, today)
         if s is None or (e is not None and e <= s):
             continue
         principal = w is None or default_width is None or w >= default_width
-        out.setdefault(bar, {"name": bars.get(bar, bar), "periods": []})["periods"].append((s, e, role, principal))
+        out.setdefault(bar, {"name": bars.get(bar) or _clean_name(bar.replace("_", " ")), "periods": []})["periods"].append((s, e, role, principal))
     return out
+
+
+def _clean_name(name):
+    """'Rod&nbsp;Evans', 'Craig Gruber †', bold markup -> the plain name."""
+    name = html.unescape(re.sub(r"<[^>]+>|'{2,3}", "", name)).replace("\xa0", " ")
+    name = re.sub(r"[†‡*]|\((?:died|d\.)[^)]*\)", "", name)
+    return re.sub(r"\s+", " ", name).strip()
+
+
+NOT_MEMBERSHIP = re.compile(r"touring|session|live|album|release|single|\bband\b|\bera\b|\bbars?\b")
+
+
+def _instrument(role):
+    """Whether a chart colour is an instrument played as a member: not the
+    band's own era bars, touring or session work, or record releases (Black
+    Sabbath's chart has touring and session colours, Gillan's band-era bars)."""
+    from app.refiner import ROLE_WORDS  # the refiner imports this module
+    return bool(role) and not NOT_MEMBERSHIP.search(role) and any(key in role for key, _ in ROLE_WORDS)
 
 
 def _num(s):

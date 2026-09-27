@@ -16,12 +16,17 @@ Colors =
   id:bass   value:blue   legend:Bass,_occasional_vocals
   id:drums  value:orange legend:Drums
   id:studio value:black  legend:Studio_album
+  id:tour   value:yellow legend:Touring_musician
+  id:era    value:black  legend:Band
 BarData =
   bar:Ann   text:"[[Ann Able (musician)|Ann Able]]"
   bar:Bob   text:"Bob B. Baker"
-  bar:Cy    text:"Cy Cole"
+  bar:Cy    text:Cy Cole
   bar:Dee   text:"Dee Dunn"
   bar:Eve   text:"Eve Early"
+  bar:Gus   text:"Gus&nbsp;Gray †"
+  bar:Hal   text:"Hal Hired"
+  bar:Old   text:"The Old Band"
 PlotData =
   width:11 textcolor:black
   color:vocals
@@ -37,6 +42,11 @@ PlotData =
   bar:Dee  from:01/02/1978 till:31/12/1979
   color:guitar
   bar:Eve  from:01/03/1975 till:10/03/1975
+  bar:Gus  from:01/01/1985 till:01/01/1990
+  color:tour
+  bar:Hal  from:01/01/1985 till:01/01/1990
+  color:era
+  bar:Old  from:start      till:01/01/1978
 }}
 [[Category:Bands]]"""
 
@@ -45,6 +55,19 @@ TODAY = date(2026, 9, 27)
 
 def _chart():
     return {m["name"]: m["stints"] for m in chart_members(find_timeline(WIKITEXT), today=TODAY)}
+
+
+def test_an_unquoted_name_is_read_whole():
+    assert "Cy Cole" in _chart()  # 'text:Cy Cole', as Whitesnake's chart writes them
+
+
+def test_names_are_cleaned_of_markup_and_marks():
+    assert "Gus Gray" in _chart()  # 'Gus&nbsp;Gray †'
+
+
+def test_touring_hands_and_band_era_bars_are_not_members():
+    chart = _chart()
+    assert "Hal Hired" not in chart and "The Old Band" not in chart
 
 
 def test_the_chart_is_found_in_the_article():
