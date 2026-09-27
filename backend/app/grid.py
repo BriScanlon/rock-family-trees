@@ -22,6 +22,7 @@ from collections import defaultdict
 from app.cartographer import (DATE_SIZE, FOOTER_H, MARGIN, MAX_MEMBERS, MAX_NOTES, MIN_PRINT_PT, NOTE_LINE,
                               NOTE_SIZE, PAPER_MM, ROLE_LINE, ROLE_SIZE, TICK, TITLE_H, Cartographer, _split_name)
 from app.fonts import HAND, text_width, wrap
+from app.narrative import lineup_for
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
@@ -156,7 +157,9 @@ class GridLayout(Cartographer):
             if i == 0 and band.undated:  # left out of the line-ups: MusicBrainz has no dates
                 extra = extra + [f"Also, dates unknown: {', '.join(band.undated[:BRIEF_NAMES])}"
                                  f"{f' and {len(band.undated) - BRIEF_NAMES} others' if len(band.undated) > BRIEF_NAMES else ''}."]
-            notes = " ".join((said + extra)[:MAX_NOTES])
+            # the notes written from Wikipedia (what the lines can't show) come first
+            told_here = [s["text"].rstrip(".") + "." for s in band.stories if lineup_for(band.lineups, s["year"]) is lu]
+            notes = " ".join((told_here + said + extra)[:MAX_NOTES])
             widest = span + NOTE_WIDEN
             while span < widest and len(wrap(notes, HAND, NOTE_SIZE, span * slot - 8)) > NOTE_LINES:
                 span += 1

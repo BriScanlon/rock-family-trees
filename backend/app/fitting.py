@@ -105,10 +105,15 @@ def select(trees, paper, lettering="classic"):
     return chosen
 
 
-def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, lettering="classic", **layout_kw):
-    """Returns (tree, layout, fit) where fit describes anything left out."""
+def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, lettering="classic",
+             stories=None, **layout_kw):
+    """Returns (tree, layout, fit) where fit describes anything left out.
+    `stories`: {band id: dated notes from app/narrative.py}, drawn with the line-ups."""
     trees = {cap: Refiner(max_bands=max_bands, max_lineups_per_band=cap).build(harvest, title=title)
              for cap in LINEUP_CAPS}
+    for tree in trees.values():  # the notes count towards each block's size, so they go in before fitting
+        for band in tree.bands.values():
+            band.stories = (stories or {}).get(band.id, [])
     full = trees[LINEUP_CAPS[0]]
     if not full.bands:
         return full, None, {}

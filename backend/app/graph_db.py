@@ -38,9 +38,78 @@ class Neo4jStore:
         with self.driver.session() as s:
             s.run("CREATE CONSTRAINT band_mbid IF NOT EXISTS FOR (b:Band) REQUIRE b.mbid IS UNIQUE")
             s.run("CREATE CONSTRAINT artist_mbid IF NOT EXISTS FOR (a:Artist) REQUIRE a.mbid IS UNIQUE")
+            s.run("CREATE CONSTRAINT noteset_key IF NOT EXISTS FOR (n:NoteSet) REQUIRE n.key IS UNIQUE")
 
     def close(self):
         self.driver.close()
+
+    # -- notes written from Wikipedia (app/narrative.py) -------------------
+    #   (:Band)-[:HAS_NOTES]->(:NoteSet {key, model, prompt, revision, article_title,
+    #       article_url, lineups, written_at})-[:INCLUDES]->(:Note {date, year,
+    #       text, source, kept, reason, position})
+    # A NoteSet is one writing: the key is the model, article revision and
+    # line-ups it was written from. Dropped notes are kept too, with the reason.
+
+    def put_notes(self, key, band_id, result):
+        with self.driver.session() as s:
+            s.execute_write(self._put_notes_tx, key, band_id, result)
+
+    @staticmethod
+    def _put_notes_tx(tx, key, band_id, result):
+        source = result.get("source") or {}
+        tx.run(
+            "MERGE (b:Band {mbid: $band}) "
+            "MERGE (ns:NoteSet {key: $key}) "
+            "SET ns.model = $model, ns.revision = $revision, ns.article_title = $title, "
+            "ns.article_url = $url, ns.lineups = $lineups, ns.prompt = $prompt, ns.written_at = datetime() "
+            "MERGE (b)-[:HAS_NOTES]->(ns) "
+            "WITH ns OPTIONAL MATCH (ns)-[:INCLUDES]->(old:Note) DETACH DELETE old",
+            band=band_id, key=key, model=result.get("model"), revision=source.get("revision"),
+            title=source.get("title"), url=source.get("url"), lineups=result.get("lineups"),
+            prompt=result.get("prompt"),
+        )
+        notes = [dict(n, kept=True) for n in result.get("notes", [])] + \
+                [dict(n, kept=False) for n in result.get("dropped", [])]
+        for i, n in enumerate(notes):
+            tx.run(
+                "MATCH (ns:NoteSet {key: $key}) "
+                "CREATE (ns)-[:INCLUDES]->(:Note {date: $date, year: $year, text: $text, source: $source, "
+                "kept: $kept, reason: $reason, position: $i})",
+                key=key, date=n.get("date"), year=n.get("year"), text=n.get("text"), source=n.get("source"),
+                kept=n["kept"], reason=n.get("reason"), i=i,
+            )
+
+    def get_notes(self, key):
+        with self.driver.session() as s:
+            return s.execute_read(self._get_notes_tx, "ns.key = $key", key=key)
+
+    def latest_notes(self, band_id, model=None):
+        """The band's most recently written notes (from any article revision),
+        for when Wikipedia or the model can't be reached."""
+        where = "b.mbid = $band" + (" AND ns.model = $model" if model else "")
+        with self.driver.session() as s:
+            return s.execute_read(self._get_notes_tx, where, band=band_id, model=model)
+
+    @staticmethod
+    def _get_notes_tx(tx, where, **params):
+        row = tx.run(
+            f"MATCH (b:Band)-[:HAS_NOTES]->(ns:NoteSet) WHERE {where} "
+            "WITH ns ORDER BY ns.written_at DESC LIMIT 1 "
+            "OPTIONAL MATCH (ns)-[:INCLUDES]->(n:Note) "
+            "WITH ns, n ORDER BY n.position "
+            "RETURN ns, collect(n) AS notes", **params,
+        ).single()
+        if not row or row["ns"] is None:
+            return None
+        ns = row["ns"]
+        notes = [dict(n) for n in row["notes"]]
+        strip = lambda n: {k: v for k, v in n.items() if k not in ("kept", "position") and v is not None}
+        return {
+            "notes": [strip(n) for n in notes if n.get("kept")],
+            "dropped": [strip(n) for n in notes if not n.get("kept")],
+            "model": ns.get("model"), "lineups": ns.get("lineups"), "prompt": ns.get("prompt"),
+            "source": {"title": ns.get("article_title"), "url": ns.get("article_url"), "revision": ns.get("revision")},
+        }
 
     def put(self, record):
         with self.driver.session() as s:

@@ -301,3 +301,18 @@ def test_a_briefly_also_list_is_kept_short():
                     members=[LineupMember(person_id="a", name="Ann Able", roles=["vocals"])])
     _, notes = GridLayout(tree)._annotations(tree.bands["x"], folded)
     assert notes[-1].count("Player") == BRIEF_NAMES and notes[-1].endswith(f"and {9 - BRIEF_NAMES} others.")
+
+
+def test_notes_from_wikipedia_land_on_their_line_up_first():
+    harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=2)
+    from app.fitting import fit_tree
+    stories = {"demo:yardbirds": [{"date": "1965-03", "year": 1965.2,
+                                   "text": "Clapton quit over the pop direction of their single"}]}
+    tree, L, fit = fit_tree(harvest, paper="A1", stories=stories)
+    yb = tree.bands["demo:yardbirds"]
+    from app.narrative import lineup_for
+    target = lineup_for(yb.lineups, 1965.2)
+    box = next(b for b in L["boxes"] if b["id"] == f"demo:yardbirds#{target.number}")
+    assert " ".join(box["notes"]).startswith("Clapton quit over the pop direction")
+    others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
+    assert not any("Clapton quit" in " ".join(b["notes"]) for b in others)

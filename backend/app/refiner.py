@@ -129,6 +129,7 @@ class Band(BaseModel):
     stints: List[Stint] = []
     lineups: List[Lineup] = []
     undated: List[str] = []  # members MusicBrainz gives no dates for, left out of the line-ups
+    stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
 
 
 class Person(BaseModel):
