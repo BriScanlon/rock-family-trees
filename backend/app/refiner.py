@@ -54,6 +54,7 @@ ROLE_WORDS = [
 ]
 NON_ROLE_ATTRIBUTES = {"original", "founder", "additional", "minor", "guest", "support", "touring", "eponymous"}
 ROLE_ORDER = ["vocals", "guitar", "steel guitar", "bass", "keyboards", "synths", "piano", "organ", "drums", "percussion"]
+PRINCIPAL_ROLES = {"vocals", "guitar", "bass", "keyboards", "piano", "organ", "synths", "drums"}
 
 
 def role_words(attributes):
@@ -67,6 +68,10 @@ def role_words(attributes):
             out.append(word)
     if len(out) > 1 and "backing vocals" in out:
         out.remove("backing vocals")
+    # a principal instrument first (Frame gives each musician one): MusicBrainz
+    # lists Ian Gillan as "harmonica, lead vocals, percussion". Among principal
+    # instruments MusicBrainz's order stands: Glenn Hughes is "bass, vocals".
+    out.sort(key=lambda r: 0 if r in PRINCIPAL_ROLES else 1)
     return out[:3]
 
 

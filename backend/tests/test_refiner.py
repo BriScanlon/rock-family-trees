@@ -45,3 +45,11 @@ def test_deaths_recorded():
 def test_titles():
     assert default_title("The Yardbirds") == "THE YARDBIRDS FAMILY TREE"
     assert default_title("Cream") == "THE CREAM FAMILY TREE"
+
+
+def test_the_main_instrument_comes_first():
+    from app.refiner import role_words
+    assert role_words(["harmonica", "lead vocals", "percussion"])[0] == "vocals"  # Ian Gillan
+    assert role_words(["percussion", "drums (drum set)"])[0] == "drums"
+    assert role_words(["electric guitar", "background vocals"]) == ["guitar"]
+    assert role_words(["bass guitar", "lead vocals"])[0] == "bass"  # Glenn Hughes: a bassist who sings

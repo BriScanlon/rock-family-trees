@@ -220,7 +220,8 @@ class GridLayout(Cartographer):
                 dates.append(f"left {last.end_label or _year(last.end)}")
             if links[pid] or dates:
                 marks[pid] = (links[pid] + dates)[:ANNOT_LINES]
-        notes = joins + ([f"Briefly also: {', '.join(extra)}."] if extra else [])
+        extra = list(dict.fromkeys(extra))  # one mention each, however many stints
+        notes = list(dict.fromkeys(joins)) + ([f"Briefly also: {', '.join(extra)}."] if extra else [])
         return marks, notes
 
     # ------------------------------------------------------------------
