@@ -61,7 +61,7 @@ def test_the_reading_is_recalled_and_the_band_notes_stay_its_own(store):
 
 
 def test_every_event_is_checked_against_its_own_article(store):
-    stray = ev(FIRE, article="Some Other Album")          # not an article it was given
+    stray = ev(INVENTED, article="Some Other Album")      # its source is in no article given
     reworded = ev(dict(STAGE, source="At the launch gig in Leeds the stage collapsed under the weight of the speakers."))
     got = story.write_story(band(), BAND_ARTICLE, [(WORK, ALBUM)], client=FakeModel([], [stray, reworded, ev(INVENTED)]))
     assert [e["text"] for e in got["events"]] == [STAGE["text"]]
@@ -87,3 +87,11 @@ def test_a_poster_reads_only_its_top_bands(monkeypatch, store):
                                         {"max_bands": 40}, lambda *a: None)
     assert read == ["b0", "b1"]                              # only the top two read now
     assert evs["b4"] == [{"text": "stored"}] and evs["b3"] == []  # the rest: what's stored, else nothing
+
+
+def test_an_event_is_checked_against_the_article_that_holds_its_source(store):
+    loose = ev(FIRE, article="Mill Sessions album")         # the model's loose name for "Mill Sessions"
+    from_band = ev(dict(GOOD, significance=4), article="Band X history")  # from the band's own article
+    got = story.write_story(band(), BAND_ARTICLE, [(WORK, ALBUM)], client=FakeModel([], [loose, from_band]))
+    assert {e["text"] for e in got["events"]} == {FIRE["text"], GOOD["text"]}
+    assert [e["subject"] for e in got["events"] if e["text"] == FIRE["text"]] == ["Mill Sessions"]

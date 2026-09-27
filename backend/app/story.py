@@ -19,6 +19,7 @@ model, the line-ups and every article's revision.
 import hashlib
 import json
 import os
+import re
 
 from app import narrative
 from app.events import EVENT_CHARS
@@ -67,7 +68,7 @@ SCHEMA = {
 
 
 def prompt_id():
-    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}|repair+context".encode()).hexdigest()[:8]
+    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}|repair+context|any-article".encode()).hexdigest()[:8]
 
 
 def story_key(band_id, articles, lineups, model):
@@ -117,18 +118,25 @@ def write_story(band, band_article, work_articles, client=None, use_cache=True, 
 
     # each checked against its own article; a misquoted source replaced by the article's sentence
     notes, dropped = narrative.check(answer.get("notes", []), band_ref, repair=True) if band_ref else ([], [])
-    by_title = {w["title"].lower(): (w, text) for w, text in works}
+    # an event is checked against whichever article holds its source - the model names
+    # its article loosely ("Definitely Maybe" for "Definitely Maybe (album)"), or takes
+    # it from the band's own; its label only breaks a tie
+    band_work = {"title": band_article["title"], "kind": "band", "sitelinks": 0} if band_article else None
+    sources = [(w, text) for w, text in works] + ([(band_work, band_ref)] if band_ref else [])
+    label = lambda t: re.sub(r"\s*\([^)]*\)|[^a-z0-9]", "", (t or "").lower())
     evs = []
     for e in answer.get("events", []):
-        w, text = by_title.get((e.get("article") or "").lower(), (None, None))
-        if w is None:  # no such article given: say where it went wrong
-            dropped.append(dict(e, reason="not from an article given"))
-            continue
         e = dict(e, significance=max(1, min(5, int(e.get("significance") or 1))))
-        kept, bad = narrative.check([e], text, max_chars=EVENT_CHARS, repair=True)
-        dropped += bad
-        evs += [dict(k, subject=w["title"], kind=w["kind"], sitelinks=w["sitelinks"], context=narrative.context(k["source"], text))
-                for k in kept]
+        ordered = sorted(sources, key=lambda wt: label(wt[0]["title"]) != label(e.get("article")))
+        for w, text in ordered:
+            kept, bad = narrative.check([e], text, max_chars=EVENT_CHARS, repair=True)
+            if kept:
+                subject = w["title"] if w["kind"] != "band" else None
+                evs += [dict(k, subject=subject, kind=w["kind"], sitelinks=w["sitelinks"],
+                             context=narrative.context(k["source"], text)) for k in kept]
+                break
+        else:
+            dropped.append(dict(bad[0] if bad else e, article=e.get("article")))
 
     # one check for the lot: nothing beyond its source (an event with the sentences either side)
     listing = notes + [dict(e, source=e["context"]) for e in evs]
