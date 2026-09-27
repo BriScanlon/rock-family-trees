@@ -334,3 +334,37 @@ def test_albums_go_with_the_line_up_that_made_them():
         others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
         assert not any(album in " ".join(b["notes"]) for b in others)
     assert not any(line.startswith("ALBUMS") for p in L.get("panels", []) for sec in p["sections"] for line in sec["lines"])
+
+
+def _overlaps(L):
+    """Pairs of different musicians' lines lying on one another for more than a pixel."""
+    segs = [(l["person_id"], (x1, y1), (x2, y2)) for l in L["edges"] + L["trunks"]
+            for (x1, y1), (x2, y2) in zip(l["points"], l["points"][1:])]
+    found = []
+    for i, (p, a, b) in enumerate(segs):
+        for q, c, d in segs[i + 1:]:
+            if p == q:
+                continue  # one musician's line forking to two line-ups
+            for axis in (0, 1):  # vertical runs share x, horizontal runs share y
+                o = 1 - axis
+                if a[axis] == b[axis] == c[axis] == d[axis] and a[o] != b[o] and c[o] != d[o]:
+                    if min(max(a[o], b[o]), max(c[o], d[o])) - max(min(a[o], b[o]), min(c[o], d[o])) > 1:
+                        found.append((p, q))
+    return found
+
+
+@pytest.mark.parametrize("root,depth,paper", [("demo:yardbirds", 4, "A2"), ("demo:acdc", 3, "A2")])
+def test_lines_never_lie_on_one_another(root, depth, paper):
+    from app.fitting import fit_tree
+    _, L, _ = fit_tree(harvester_for(root).harvest(root, depth=depth), paper=paper, max_bands=24)
+    assert _overlaps(L) == []
+
+
+def test_a_departure_track_sits_above_an_arrival_in_the_same_column():
+    from app.grid import _Tracks
+    t = _Tracks(13, 4)
+    arrive = t.take("row", 0, 100, side=1, arrives=100)       # from the left, down into column 100
+    leave = t.take("row", 100, 200, side=-1, leaves=100)      # from column 100, off to the right
+    assert leave < arrive  # the leaving line's drop ends above where the arriving one's begins
+    crowded = [t.take("row", 300, 400) for _ in range(len(t.offsets))]
+    assert len(set(crowded)) == len(t.offsets)  # each run its own track while there are tracks
