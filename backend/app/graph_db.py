@@ -9,6 +9,7 @@ A node with `fetched_at` set has had its full relation list stored, so it can be
 served from the graph without calling MusicBrainz. MEMBER_OF is keyed on the
 stint dates so people who leave and rejoin keep every stint.
 """
+import json
 import os
 import time
 
@@ -86,7 +87,7 @@ class Neo4jStore:
     def latest_notes(self, band_id, model=None):
         """The band's most recently written notes (from any article revision),
         for when Wikipedia or the model can't be reached."""
-        where = "b.mbid = $band" + (" AND ns.model = $model" if model else "")
+        where = "b.mbid = $band AND ns.model <> 'curator'" + (" AND ns.model = $model" if model else "")
         with self.driver.session() as s:
             return s.execute_read(self._get_notes_tx, where, band=band_id, model=model)
 
@@ -122,11 +123,14 @@ class Neo4jStore:
             f"MERGE (n:{label} {{mbid: $mbid}}) "
             "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
             "n.begin = $begin, n.end = $end, n.ended = $ended, n.genres = $genres, n.wikidata = $wikidata, "
-            "n.albums = $albums, n.fetched_at = datetime()",
+            "n.albums = $albums, n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, "
+            "n.fetched_at = datetime()",
             mbid=record["mbid"], name=record["name"], type=record.get("type"),
             disambiguation=record.get("disambiguation"), begin=record.get("begin"),
             end=record.get("end"), ended=record.get("ended", False), genres=record.get("genres") or [],
-            wikidata=record.get("wikidata"), albums=record.get("albums"),
+            wikidata=record.get("wikidata"), albums=record.get("albums"), sitelinks=record.get("sitelinks"),
+            chart=None if record.get("chart") is None else json.dumps(record["chart"]),
+            chart_source=record.get("chart_source"),
         )
         for m in record.get("memberships", []):
             tx.run(
@@ -166,6 +170,9 @@ class Neo4jStore:
             "genres": list(n.get("genres") or []),
             "wikidata": n.get("wikidata"),  # None: cached before Wikidata links were kept
             "albums": None if n.get("albums") is None else list(n.get("albums")),  # None: not looked up yet
+            "sitelinks": n.get("sitelinks"),  # Wikipedias with an article on the band; None: not looked up
+            "chart": None if n.get("chart") is None else json.loads(n["chart"]),  # Wikipedia's member chart; [] none
+            "chart_source": n.get("chart_source"),
             "memberships": [
                 {"person_id": r["pid"], "person_name": r["pname"], "band_id": r["bid"],
                  "band_name": r["bname"], "begin": r["begin"], "end": r["end"],

@@ -5,7 +5,7 @@ Generates printable posters in the style of **Pete Frame's Rock Family Trees** f
 ## Run and test
 
 ```bash
-cd backend && pip install -r requirements-dev.txt && pytest          # ~60 tests, no network needed
+cd backend && pip install -r requirements-dev.txt && pytest          # ~90 tests, no network needed
 uvicorn main:app --port 8000                                          # inline jobs + JSON file cache
 cd frontend && npm install && npm run dev                              # http://localhost:3000, proxies /api
 python backend/tests/live_smoke.py http://localhost:8000               # needs real MusicBrainz access
@@ -18,7 +18,7 @@ Render an SVG from the command line: `cd backend && python -c "from app.pipeline
 
 ## Pipeline (backend/app)
 
-`musicbrainz.py` (JSON client, 1 req/s, `inc=artist-rels+genres`) → `store.py`/`graph_db.py` (cache: Neo4j or JSON files) → `harvester.py` (band → members → other bands, by generation, fetch budget spent on the bands reached through founders and long-serving members first) → `refiner.py` (dates, stints, line-ups, band ranking) → `wikipedia.py` + `narrative.py` (notes written from Wikipedia by a model, stored in Neo4j) → `fitting.py` (what goes on the sheet) → `grid.py` (Frame's grid layout; `cartographer.py` keeps the lane layout for timeline mode and shared helpers) → `artist.py` (SVG). `pipeline.py` wires them together; `jobs.py`/`worker.py`/`main.py` handle jobs and the API.
+`musicbrainz.py` (JSON client, 1 req/s, `inc=artist-rels+genres`) → `store.py`/`graph_db.py` (cache: Neo4j or JSON files) → `harvester.py` (band → members → other bands, by generation, fetch budget spent on the bands reached through founders and long-serving members first) → `refiner.py` (dates, stints, line-ups, band ranking; Wikipedia member charts from `charts.py` applied here) → `wikipedia.py` + `narrative.py` (notes written from Wikipedia by a model, stored in Neo4j) → `fitting.py` (what goes on the sheet) → `grid.py` (Frame's grid layout; `cartographer.py` keeps the lane layout for timeline mode and shared helpers) → `artist.py` (SVG). `pipeline.py` wires them together; `jobs.py`/`worker.py`/`main.py` handle jobs and the API.
 
 ## Decisions already made (don't undo without asking)
 
@@ -39,9 +39,10 @@ Render an SVG from the command line: `cd backend && python -c "from app.pipeline
 - **Ranking** (`refiner.Refiner._select`): a link is a shared musician, worth the geometric mean of their years in each band, ×2 for a direct move (left one, joined the other within 2 years), ×0.3 for a side project running alongside. Founders ("original") count as at least 10 years; undated memberships count as 0.25. Design and next steps (band significance via Wikidata, calibration families): GitHub issue #6.
 - **Notes from Wikipedia** (`narrative.py`): Wikipedia is a *reference only*; the notes are written fresh and never copied (CC BY-SA). Every note must quote its source passage; code drops a note whose source isn't in the article, that shares 6 ordinary words with it (names and titles excepted), or that says more than its source (a second model pass). Stored in Neo4j (`Band-HAS_NOTES->NoteSet-INCLUDES->Note`, dropped ones too) and recalled, keyed on prompt fingerprint, model, article revision and line-ups. The user asked for all generated notes to be stored so they can be recalled.
 - **The model is local by default:** Qwen3 14B through Ollama on the user's RX 7900 XT (20 GB). The model is `rftg-qwen3`, built from `ollama/Modelfile` with a 40,960-token context; the user wants a high context size. On Windows Ollama runs natively (Docker Desktop can't give a container an AMD GPU); containers reach it at `host.docker.internal:11434`. **One request at a time** (lock file on the data volume plus `OLLAMA_NUM_PARALLEL=1`). The LAN server at 192.168.4.118 has only 6 GB of VRAM, so it isn't used.
+- **Wikipedia member charts correct MusicBrainz** (`charts.py`): stored beside MusicBrainz's memberships, never over them, and applied in the refiner for the members the chart lists; MusicBrainz's word stands for everyone else.
 - **Albums go with the line-up that recorded them** ("Recorded Burn (1974), ..."), never as one list (the user's instruction). Studio albums come from one MusicBrainz search per band and are stored on the band record.
 - **Fill the page** as Frame did (his trees are 2-3% blank): text panels in the gaps hold the notes blocks had no room for and where musicians went off this poster. The user allows rearranging bands and enlarging the text to fill space. Measure white space on the rendered PNG (share of empty tiles), not by eye.
-- **Content first, then placement** (the user's instruction, issue #8): build every candidate band's line-ups, notes, albums and links before trying placements, then optimise placement for chronology, page coverage and content together.
+- **Content first, then placement** (the user's instruction, issue #8): build every candidate band's line-ups, notes, albums and links before trying placements, then optimise placement for chronology, page coverage and content together. The optimiser (`optimise.py`, simulated annealing from the greedy fit, `OPTIMISE_SECONDS`) may add bands, change detail, move bands and enlarge text, but **never drops a band the greedy ranking chose**.
 - Every generated SVG is self-contained: fonts are embedded as data URIs, and only the faces in use are included.
 - Job status is shared through JSON files in `ARTIFACT_DIR`, not a Celery result backend.
 

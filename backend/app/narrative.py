@@ -320,16 +320,79 @@ def lineup_for(lineups, year):
     return min(lineups, key=lambda lu: min(abs(year - lu.start), abs(year - lu.end)), default=None)
 
 
+# -- corrections by hand --------------------------------------------------
+# A person has the last word: notes added by hand always show (first), and a
+# generated note rejected by hand never shows again, however often the notes
+# are rewritten. Kept in the store as the band's "curator" note set.
+CURATOR = "curator"
+
+
+def _curated_key(band_id):
+    return f"{band_id}:{CURATOR}"
+
+
+def curated(store, band_id):
+    return store.get_notes(_curated_key(band_id)) or {"notes": [], "dropped": [], "model": CURATOR}
+
+
+def add_note(store, band_id, date, text):
+    """Add a note by hand: shown on the line-up covering `date`, before any other."""
+    if _year(date) is None:
+        raise ValueError(f"Date must be YYYY or YYYY-MM, not {date!r}")
+    cur = curated(store, band_id)
+    cur["notes"] = [n for n in cur["notes"] if n["text"] != text] + [
+        {"date": date, "year": _year(date), "text": text, "source": "added by hand"}]
+    store.put_notes(_curated_key(band_id), band_id, dict(cur, model=CURATOR))
+    return cur
+
+
+def reject_note(store, band_id, start_of_text, reason="rejected by hand"):
+    """Reject every generated note starting with `start_of_text`, for good."""
+    cur = curated(store, band_id)
+    cur["dropped"] = [d for d in cur["dropped"] if d["text"] != start_of_text] + [
+        {"text": start_of_text, "reason": reason}]
+    store.put_notes(_curated_key(band_id), band_id, dict(cur, model=CURATOR))
+    return cur
+
+
+def final_notes(store, band_id, generated):
+    """What a poster shows: notes added by hand, then the generated ones not
+    rejected by hand."""
+    cur = curated(store, band_id)
+    rejected = [d["text"] for d in cur["dropped"]]
+    return list(cur["notes"]) + [n for n in generated if not any(n["text"].startswith(r) for r in rejected)]
+
+
 def main(argv=None):
-    """Review a band's notes by hand before they go near a poster:
-        python -m app.narrative <musicbrainz band id>
-    Prints each line-up, the notes that landed on it with their source
-    passages, and anything dropped with the reason."""
+    """Review a band's notes, and correct them by hand:
+        python -m app.narrative <band id>                        write (or recall) and review
+        python -m app.narrative show <band id>                   what a poster would show, with status
+        python -m app.narrative add <band id> <YYYY[-MM]> <text>  add a note by hand
+        python -m app.narrative reject <band id> <start of note>  never show that generated note
+    The review prints each line-up, the notes that landed on it with their
+    source passages, and anything dropped with the reason."""
     import sys
     from app.pipeline import harvester_for
     from app.refiner import Refiner
     from app.wikipedia import WikipediaClient
-    mbid = (argv or sys.argv[1:])[0]
+    args = list(argv or sys.argv[1:])
+    if args and args[0] in ("add", "reject", "show"):
+        from app.store import get_store
+        store = get_store()
+        command, band_id = args[0], args[1]
+        if command == "add":
+            add_note(store, band_id, args[2], " ".join(args[3:]))
+        elif command == "reject":
+            reject_note(store, band_id, " ".join(args[2:]))
+        latest = store.latest_notes(band_id) or {"notes": []}
+        rejected = [d["text"] for d in curated(store, band_id)["dropped"]]
+        for n in curated(store, band_id)["notes"]:
+            print(f"  by hand   {n['date']:>7}  {n['text']}")
+        for n in latest["notes"]:
+            status = "REJECTED " if any(n["text"].startswith(r) for r in rejected) else "generated"
+            print(f"  {status} {n['date']:>7}  {n['text']}")
+        return
+    mbid = args[0]
     harvester = harvester_for(mbid)
     record = harvester.fetch(mbid)
     if record.get("wikidata") is None:  # cached before Wikidata links were kept

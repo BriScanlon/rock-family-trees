@@ -35,11 +35,13 @@ PANEL_ROW_WEIGHT = 4    # a row is ~4 half-member columns tall: weigh rows by th
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
-LINE_STEP = 5           # separation of parallel lines in a channel or gap
+LINE_STEP = 5           # separation of parallel lines in a gap
+CHANNEL_STEP = 4        # and in a channel, where more lines meet (seven tracks in a 30px channel)
 PACK_REPAIRS = 40       # rounds of re-placing to turn upward moves downwards
 MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the sheet's edges
 MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
 MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
+HINT_WEIGHT = 0.2       # pull (per column) towards a band's preferred column, when the optimiser gives one
 ERA_WEIGHT = 1.5        # pull towards the row where line-ups of the same date sit
 TOP_WEIGHT = 0.3        # pull towards the top: keep the tree compact
 NEAR_WEIGHT = 0.08      # pull (per column) towards bands sharing musicians
@@ -134,9 +136,50 @@ def coverage(layout):
     return ink / area if area > 0 else 0.0
 
 
+class _Tracks:
+    """Parallel tracks in the channels and gaps: each run of line takes the
+    track nearest the centre that's free along its whole length, so lines
+    never lie on one another (a cycle of five tracks let the sixth line in a
+    gap sit on the first). In a channel, a line leaving the row above drops
+    from a member to its track, and one arriving in the row below drops from
+    its track to a member: in the same column, the departure's track must be
+    above the arrival's or the two drops lie on one another. Departures
+    prefer the upper tracks and arrivals the lower."""
+
+    def __init__(self, room, step=LINE_STEP):
+        n = max(0, int(room // step))
+        self.step = step
+        self.offsets = [0.0] + [sign * k * step for k in range(1, n + 1) for sign in (1, -1)]
+        self.used = defaultdict(list)   # key -> [(offset, lo, hi)]
+        self.drops = defaultdict(list)  # key -> [(x, +1 departure / -1 arrival, offset)]
+
+    def take(self, key, a, b, side=0, leaves=None, arrives=None):
+        """The track for a run from a to b; side -1 prefers the upper (or left)
+        tracks, +1 the lower, 0 the centre. `leaves`/`arrives`: the x where
+        the run's line drops in from the row above / down to the row below."""
+        lo, hi = min(a, b), max(a, b)
+        runs, drops = self.used[key], self.drops[key]
+        mine = [(x, 1) for x in [leaves] if x is not None] + [(x, -1) for x in [arrives] if x is not None]
+
+        def clashes(off):
+            n = sum(1 for o, l, h in runs if o == off and l < hi + self.step and lo < h + self.step)
+            for x, kind in mine:  # a departure must sit above (less than) an arrival in its column
+                n += sum(1 for dx, dk, do in drops if abs(dx - x) < 1 and dk != kind and
+                         (do <= off if kind == 1 else do >= off))
+            return n
+
+        order = sorted(self.offsets, key=lambda o: (side * o < 0, abs(o))) if side else self.offsets
+        off = next((o for o in order if not clashes(o)), None)
+        if off is None:  # a crowded channel: the least shared track
+            off = min(order, key=clashes)
+        runs.append((off, lo, hi))
+        drops.extend((x, kind, off) for x, kind in mine)
+        return off
+
+
 class GridLayout(Cartographer):
     def __init__(self, tree, paper="auto", subtitle=None, lettering="classic", cols=None, rows=None,
-                 weights=None, mirror=False):
+                 weights=None, mirror=False, hints=None, scale=1.0):
         super().__init__(tree, paper=paper, subtitle=subtitle, timeline=False, lettering=lettering)
         self.slot, self.title_h, self.bar_dy, self.block_h = _dims(self.ls)
         self.unit = self.slot / 2
@@ -146,15 +189,18 @@ class GridLayout(Cartographer):
         # the fitting tries several and keeps the fullest page
         self.era_w, self.top_w, self.near_w = weights or (ERA_WEIGHT, TOP_WEIGHT, NEAR_WEIGHT)
         self.mirror = mirror
+        self.hints = hints or {}  # band id -> preferred column (the optimiser moves bands about with these)
+        self.scale = scale        # text size, as a multiple of the smallest readable
 
     # ------------------------------------------------------------------
     @staticmethod
-    def sheet(paper, lettering_style):
-        """The sheet at the smallest readable print size: (cols, rows, width px, height px),
-        in whichever orientation holds more."""
+    def sheet(paper, lettering_style, scale=1.0):
+        """The sheet with the smallest text printing at MIN_PRINT_PT x scale:
+        (cols, rows, width px, height px), in whichever orientation holds more.
+        A larger scale means larger text, so fewer columns and rows."""
         slot, _, _, block_h = _dims(lettering_style)
         unit, row_h = slot / 2, block_h + CHANNEL
-        px_per_mm = min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE) / (MIN_PRINT_PT * 25.4 / 72)
+        px_per_mm = min(ROLE_SIZE, DATE_SIZE, NOTE_SIZE) / (MIN_PRINT_PT * scale * 25.4 / 72)
         short, long_ = PAPER_MM[paper]
         best = None
         for w_mm, h_mm in ((short, long_), (long_, short)):
@@ -370,8 +416,10 @@ class GridLayout(Cartographer):
                 era = sum(abs(r - e) for r, e in zip(rows, era_rows)) / len(rows)
                 near = sum(k * abs(c0 - c) for c, k in links) / max(1, sum(k for _, k in links))
                 near += 3 * min((abs(c0 - c) for c in own), default=0)  # a re-formed band returns to its columns
+                hint = self.hints.get(u["band"].id)
                 cost = ((rows[-1] - rows[0]) + self.top_w * rows[0] + self.era_w * era
-                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0))
+                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0)
+                        + (HINT_WEIGHT * abs(c0 - hint) if hint is not None else 0.0))
                 if best is None or cost < best[0]:
                     best = (cost, c0, rows)
             if best is None:
@@ -518,7 +566,7 @@ class GridLayout(Cartographer):
         return self.x0 + c * self.unit * self.hs
 
     def _sheet_px(self):
-        cols, rows, W, H = GridLayout.sheet(self.paper, self.ls)
+        cols, rows, W, H = GridLayout.sheet(self.paper, self.ls, self.scale)
         return W, H
 
     # ------------------------------------------------------------------
@@ -639,15 +687,16 @@ class GridLayout(Cartographer):
         """Each musician's line straight down to their next line-up in the
         same run; every other move along the channel under the source row,
         down the nearest clear gap, along the channel above the target row
-        and into place. Parallel lines are spread so none sit on each other."""
+        and into place. Each run takes the nearest free track in its channel or
+        gap (_Tracks), so no two lines share a stretch of ink."""
         member = {(b["id"], m["person_id"]): m for b in placed for m in b["members"]}
         unit_of = {}
         for u in self._units_cache:
             for b in u["boxes"]:
                 unit_of[b["id"]] = id(u)
         channel_y = lambda t: row_y(t) + self.block_h + (self.pitch - self.block_h) / 2
-        in_channel, in_gap = defaultdict(int), defaultdict(int)
-        spread = lambda k: ((k % 5) - 2) * LINE_STEP
+        channels = _Tracks((self.pitch - self.block_h) / 2 - 2, CHANNEL_STEP)  # row -> horizontal runs
+        gaps = _Tracks(self.unit * self.hs / 2 - 3)               # column -> vertical runs
 
         trunks, edges = [], []
         for person_id, a, b in self.moves:
@@ -658,22 +707,22 @@ class GridLayout(Cartographer):
             if unit_of[a["id"]] == unit_of[b["id"]] and b["number"] == a["number"] + 1:
                 pts = [(ma["cx"], ma["bottom"])]
                 if mb["cx"] != ma["cx"]:
-                    y = channel_y(tb - 1)
+                    y = channel_y(tb - 1) + channels.take(tb - 1, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
                     pts += [(ma["cx"], y), (mb["cx"], y)]
                 pts.append((mb["cx"], b["bar_y"]))
                 trunks.append({"person_id": person_id, "points": pts, "dashed": b["after_gap"]})
                 continue
-            y1 = channel_y(ta) + spread(in_channel[ta])
-            in_channel[ta] += 1
             if tb == ta + 1:
+                y1 = channel_y(ta) + channels.take(ta, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
                 pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (mb["cx"], y1), (mb["cx"], b["bar_y"])]
             else:
                 step = self.unit * self.hs
                 c = self._clear_gap(ta + 1, tb - 1, (mb["cx"] - x0) / step, (ma["cx"] - x0) / step)
-                xg = (self._col_x(c + 0.5) if c is not None else x0 - MARGIN / 2) + spread(in_gap[c])
-                in_gap[c] += 1
-                y2 = channel_y(tb - 1) + spread(in_channel[tb - 1])
-                in_channel[tb - 1] += 1
+                xc = self._col_x(c + 0.5) if c is not None else x0 - MARGIN / 2
+                y1, y2 = channel_y(ta), channel_y(tb - 1)
+                xg = xc + gaps.take(c, y1, y2)
+                y1 += channels.take(ta, ma["cx"], xg, side=-1, leaves=ma["cx"])
+                y2 += channels.take(tb - 1, xg, mb["cx"], side=1, arrives=mb["cx"])
                 pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (xg, y1), (xg, y2), (mb["cx"], y2),
                        (mb["cx"], b["bar_y"])]
             edges.append({"person_id": person_id, "from": a["id"], "to": b["id"],
