@@ -94,7 +94,7 @@ class MusicBrainzClient:
         return results
 
     def get_artist(self, mbid):
-        data = self._get(f"artist/{mbid}", {"inc": "artist-rels+genres"})
+        data = self._get(f"artist/{mbid}", {"inc": "artist-rels+genres+url-rels"})
         if data is None:
             return None
         return normalize_artist(data)
@@ -113,6 +113,11 @@ def normalize_artist(data):
         "ended": bool(ls.get("ended")),
         "genres": [g["name"] for g in sorted(data.get("genres") or [], key=lambda g: -(g.get("count") or 0))],
         "memberships": [],
+        # the artist's Wikidata item, if MusicBrainz links one ("" = looked, none);
+        # the way into Wikipedia for the notes (app/wikipedia.py)
+        "wikidata": next((rel["url"]["resource"].rstrip("/").rsplit("/", 1)[-1]
+                          for rel in data.get("relations", [])
+                          if rel.get("type") == "wikidata" and rel.get("url", {}).get("resource")), ""),
     }
     for rel in data.get("relations", []):
         if rel.get("type") != "member of band" or "artist" not in rel:

@@ -6,6 +6,14 @@ x-backend-env: &backend-env
   NEO4J_USER: ${NEO4J_USER:-neo4j}
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change-me-please}
   MB_USER_AGENT: ${MB_USER_AGENT:-RockFamilyTreeGen/2.0 ( https://github.com/BriScanlon/rock-family-trees )}
+  # The notes written from Wikipedia (app/narrative.py): a local model through Ollama by default.
+  # On Windows/macOS, Ollama runs natively on the host (Docker Desktop can't hand an AMD GPU to a
+  # container); on a Linux host with an AMD GPU, `docker compose --profile ollama-rocm up` runs it
+  # here instead - then set OLLAMA_URL=http://rftg-ollama:11434.
+  NARRATIVE_BACKEND: ${NARRATIVE_BACKEND:-ollama}
+  OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-rftg-qwen3}  # qwen3:14b with a 40K context: ollama/Modelfile
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # only for NARRATIVE_BACKEND=anthropic
   ARTIFACT_DIR: /data/artifacts
   CACHE_DIR: /data/cache
 
@@ -14,6 +22,7 @@ services:
     build: ./backend
     container_name: rftg-backend
     environment: *backend-env
+    extra_hosts: ["host.docker.internal:host-gateway"]  # the host's Ollama, on Linux too
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -29,6 +38,7 @@ services:
     container_name: rftg-worker
     command: celery -A app.worker worker --loglevel=info --concurrency=2
     environment: *backend-env
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - ./backend:/app
       - rftg_data:/data
@@ -76,10 +86,25 @@ services:
       retries: 20
     networks: [rftg-net]
 
+  # Optional: Ollama on an AMD GPU (ROCm), for Linux hosts only. Off unless asked for:
+  #   docker compose --profile ollama-rocm up -d
+  #   docker exec rftg-ollama ollama pull qwen3:14b
+  #   docker cp ollama/Modelfile rftg-ollama:/Modelfile && docker exec rftg-ollama ollama create rftg-qwen3 -f /Modelfile
+  rftg-ollama:
+    image: ollama/ollama:rocm
+    container_name: rftg-ollama
+    profiles: ["ollama-rocm"]
+    devices: ["/dev/kfd", "/dev/dri"]
+    group_add: ["video"]
+    volumes:
+      - rftg_ollama:/root/.ollama
+    networks: [rftg-net]
+
 networks:
   rftg-net:
     driver: bridge
 
 volumes:
+  rftg_ollama:
   rftg_data:
   rftg_neo4j_data:
