@@ -70,9 +70,8 @@ def build_content(artist_id, opts, progress=None, harvester=None, full=False):
     )
     gather_standing(harvester, harvest, progress)  # before any ranking: it counts towards it
     gather_charts(harvester, harvest, progress)    # before any line-ups: it corrects them
-    stories = gather_stories(harvester, harvest, opts, progress, full) if opts["notes"] else {}
+    stories, events = gather_story(harvester, harvest, opts, progress, full) if opts["notes"] else ({}, {})
     albums = gather_albums(harvester, harvest, opts, progress)
-    events = gather_events(harvester, harvest, opts, progress, full) if opts["notes"] else {}
     trees = build_trees(harvest, opts["max_bands"], opts.get("title"), stories, albums, events)
     lettering = opts["lettering"]
     if lettering not in STYLES:  # "auto": follow the root band's genres
@@ -195,26 +194,39 @@ def gather_charts(harvester, harvest, progress):
         harvester.store.put(record)
 
 
-def gather_events(harvester, harvest, opts, progress, full=False):
-    """Events from the top-ranked bands' most written-about albums and tours
-    (app/events.py): {band id: [{"date", "year", "text", "significance",
-    "subject"}]}. Each band's albums and tours are looked up once (Wikidata)
-    and kept on its record; each article is read once per revision."""
+def gather_story(harvester, harvest, opts, progress, full=False):
+    """Each band's notes and events in one reading (app/story.py): the band's
+    article with its most written-about albums and tours, one call to write
+    and one to check. A poster reads its top NARRATIVE_BANDS bands (4 albums,
+    2 tours each); every other band recalls what's stored; `full` (the
+    background enrichment) reads them all, 6 albums each. Returns
+    ({band id: notes}, {band id: events})."""
     if harvest["root_id"].startswith("demo:"):
-        return {}
+        return {}, {}
     from app import events as ev
+    from app import narrative
+    from app.story import write_story
     from app.wikipedia import WikipediaClient
-    ranked = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
+    everyone = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
+    ranked = everyone if full or not NARRATIVE_BANDS else everyone[:NARRATIVE_BANDS]
     albums = ev.EVENT_ALBUMS_FULL if full else ev.EVENT_ALBUMS
-    wiki, out = WikipediaClient(), {}
-    for i, band in enumerate(ranked):
+    wiki, stories, events = WikipediaClient(), {}, {}
+
+    def recall(band):
         record = harvest["records"].get(band.id) or {}
-        stored = record.get("events")
-        # already read this deep: recalled, no model; beyond the poster's top bands: whatever is stored
-        if stored is not None and (record.get("events_depth") or 0) >= albums or (not full and i >= ev.EVENT_BANDS):
-            out[band.id] = list(stored or [])
-            continue
+        got = harvester.store.latest_notes(band.id)
+        stories[band.id] = got["notes"] if got else []
+        events[band.id] = list(record.get("events") or [])
+
+    for band in everyone[len(ranked):]:  # beyond the poster's top bands: what's stored, no model
+        recall(band)
+    for i, band in enumerate(ranked):
+        progress(60 + int(13 * i / max(1, len(ranked))), f"Reading up on {band.name} ({i + 1} of {len(ranked)})")
+        record = harvest["records"].get(band.id) or {}
         try:
+            if record.get("wikidata") is None:  # cached before Wikidata links were kept
+                record = harvester._client().get_artist(band.id) or record
+                harvester.store.put(record)
             works = record.get("works")
             if works is None or any("length" not in w for w in works):
                 works = works if works is not None else wiki.works(record.get("wikidata"))
@@ -222,65 +234,23 @@ def gather_events(harvester, harvest, opts, progress, full=False):
                 works = [dict(w, length=lengths.get(w["title"], 0)) for w in works]
                 record["works"] = works
                 harvester.store.put(record)
-            for work in ev.choose_works(works, albums=albums):
-                progress(73, f"Reading about {band.name}'s {work['title']} ({i + 1} of {min(len(ranked), ev.EVENT_BANDS) if not full else len(ranked)})")
-                article = wiki.article(work["title"])
-                if not article:
-                    continue
-                got = ev.write_events(band, work, article, store=harvester.store)
-                out.setdefault(band.id, []).extend(
-                    dict(n, subject=work["title"], kind=work["kind"], sitelinks=work["sitelinks"]) for n in got["notes"])
-            # then rated against each other, one scale for the band's whole story
-            ratings = ev.rank(band, out.get(band.id, []), store=harvester.store)
-            out[band.id] = [dict(e, significance=ratings.get(e["text"], e.get("significance", 1)))
-                            for e in out.get(band.id, [])]
-            # kept on the band's record: later posters recall them without the model
-            record["events"], record["events_depth"] = out[band.id], albums
-            harvester.store.put(record)
-        except Exception as e:  # events are extra: the poster is drawn without them
-            print(f"No events for {band.name}: {type(e).__name__}: {e}")
-    return out
-
-
-def gather_stories(harvester, harvest, opts, progress, full=False):
-    """Notes from Wikipedia for the candidate bands: {band id: [notes]}.
-    Written once per band, article revision and model, stored (Neo4j) and
-    recalled after, so only a band's first poster waits for the model. If
-    Wikipedia or the model can't be reached, the band's last stored notes are
-    used; with none, the band has no notes and the poster is still drawn."""
-    if harvest["root_id"].startswith("demo:"):
-        return {}
-    from app import narrative
-    from app.wikipedia import WikipediaClient
-    everyone = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
-    ranked = everyone if full or not NARRATIVE_BANDS else everyone[:NARRATIVE_BANDS]
-    wiki, out = WikipediaClient(), {}
-    for band in everyone[len(ranked):]:  # beyond the poster's top bands: their notes if stored, no model
-        recalled = harvester.store.latest_notes(band.id)
-        out[band.id] = narrative.final_notes(harvester.store, band.id, recalled["notes"] if recalled else [])
-    for i, band in enumerate(ranked):
-        progress(60 + int(12 * i / max(1, len(ranked))), f"Reading up on {band.name}")
-        try:
-            record = harvest["records"][band.id]
-            if record.get("wikidata") is None:  # cached before Wikidata links were kept
-                record = harvester._client().get_artist(band.id) or record
+            band_article = wiki.article(wiki.title_for(record.get("wikidata")))
+            work_articles = [(w, a) for w in ev.choose_works(works, albums=albums)
+                             for a in [wiki.article(w["title"])] if a]
+            if band_article or work_articles:
+                got = write_story(band, band_article, work_articles, store=harvester.store)
+                stories[band.id], events[band.id] = got["notes"], got["events"]
+                # kept on the band's record: later posters recall them without the model
+                record["events"], record["events_depth"] = got["events"], albums
                 harvester.store.put(record)
-            article = wiki.article(wiki.title_for(record.get("wikidata")))
-            if article:
-                out[band.id] = narrative.write_notes(band, article, store=harvester.store)["notes"]
             else:
-                out[band.id] = []
-        except Exception as e:
-            # Wikipedia or the model out of reach: recall the band's last notes, if any
-            recalled = harvester.store.latest_notes(band.id)
-            out[band.id] = recalled["notes"] if recalled else []
-            if recalled and recalled.get("notes"):
-                print(f"Recalled stored notes for {band.name} ({type(e).__name__}: {e})")
-            else:
-                print(f"No notes for {band.name}: {type(e).__name__}: {e}")
-        # corrections by hand have the last word: added notes first, rejected ones never
-        out[band.id] = narrative.final_notes(harvester.store, band.id, out.get(band.id, []))
-    return out
+                stories[band.id], events[band.id] = [], []
+        except Exception as e:  # Wikipedia or the model out of reach: what's stored, if anything
+            print(f"Recalled what's stored for {band.name} ({type(e).__name__}: {e})")
+            recall(band)
+    for band in everyone:  # corrections by hand have the last word
+        stories[band.id] = narrative.final_notes(harvester.store, band.id, stories.get(band.id, []))
+    return stories, events
 
 
 def gather_albums(harvester, harvest, opts, progress):

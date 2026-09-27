@@ -85,9 +85,11 @@ class Neo4jStore:
             tx.run(
                 "MATCH (ns:NoteSet {key: $key}) "
                 "CREATE (ns)-[:INCLUDES]->(:Note {date: $date, year: $year, text: $text, source: $source, "
-                "kept: $kept, reason: $reason, position: $i, significance: $significance})",
+                "kept: $kept, reason: $reason, position: $i, significance: $significance, "
+                "subject: $subject, kind: $kind, sitelinks: $sitelinks})",
                 key=key, date=n.get("date"), year=n.get("year"), text=n.get("text"), source=n.get("source"),
                 kept=n["kept"], reason=n.get("reason"), i=i, significance=n.get("significance"),
+                subject=n.get("subject"), kind=n.get("kind"), sitelinks=n.get("sitelinks"),
             )
 
     def get_notes(self, key):
@@ -97,7 +99,8 @@ class Neo4jStore:
     def latest_notes(self, band_id, model=None):
         """The band's most recently written notes (from any article revision),
         for when Wikipedia or the model can't be reached."""
-        where = ("b.mbid = $band AND ns.model <> 'curator' AND NOT ns.key STARTS WITH 'rank:'"
+        where = ("b.mbid = $band AND ns.model <> 'curator' AND NOT ns.key STARTS WITH 'rank:' "
+                 "AND NOT ns.key ENDS WITH ':events'"
                  + (" AND ns.model = $model" if model else ""))  # event ratings aren't the band's notes
         with self.driver.session() as s:
             return s.execute_read(self._get_notes_tx, where, band=band_id, model=model,
