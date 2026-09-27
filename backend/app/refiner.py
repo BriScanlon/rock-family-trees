@@ -180,10 +180,18 @@ class Refiner:
         # A musician's instrument where MusicBrainz leaves it off one membership
         # but gives it on another (Dio: none in Rainbow, "lead vocals" in Black Sabbath)
         self.known_roles = defaultdict(Counter)
+        # each musician's principal instruments, in each band and anywhere: MusicBrainz
+        # gives Liam Gallagher only "tambourine" in Oasis, Noel only "background vocals"
+        self.principal = defaultdict(Counter)
+        self.principal_in = defaultdict(Counter)
         for rec in records.values():
             for m in rec.get("memberships", []):
-                for r in role_words(m.get("attributes"))[:1]:
+                words = role_words(m.get("attributes"))
+                for r in words[:1]:
                     self.known_roles[m["person_id"]][r] += 1
+                for r in (w for w in words if w in PRINCIPAL_ROLES):
+                    self.principal[m["person_id"]][r] += 1
+                    self.principal_in[(m["person_id"], m["band_id"])][r] += 1
 
         bands = {}
         for band_id, level in levels.items():
@@ -216,13 +224,30 @@ class Refiner:
             people=people,
         )
 
+    def _roles(self, m):
+        """A membership's instruments, principal first. Where it names only a
+        secondary one (tambourine, percussion, backing vocals), the musician's
+        principal instrument comes first - from their other memberships of the
+        same band, else anywhere: Liam Gallagher sang, Noel played guitar."""
+        words = role_words(m.get("attributes"))
+        if words and words[0] in PRINCIPAL_ROLES:
+            return words
+        pid = m["person_id"]
+        known = getattr(self, "principal_in", {}).get((pid, m["band_id"])) or getattr(self, "principal", {}).get(pid)
+        if known:
+            lead = known.most_common(1)[0][0]
+            return [lead] + [w for w in words if w != lead]
+        return words or self._role_for(pid)
+
     def _role_for(self, person_id):
         known = getattr(self, "known_roles", {}).get(person_id)
         return [known.most_common(1)[0][0]] if known else []
 
     # -- bands -----------------------------------------------------------
     def _build_band(self, rec, level):
-        raw = [m for m in rec["memberships"] if m["band_id"] == rec["mbid"]]
+        # members only: a touring, guest or support musician isn't in the line-up (Frame drew the band)
+        raw = [m for m in rec["memberships"] if m["band_id"] == rec["mbid"]
+               and not {"touring", "guest", "support"} & {(a or "").lower() for a in m.get("attributes") or []}]
         b_start, b_start_label = parse_date(rec.get("begin"))
         b_end, b_end_label = parse_date(rec.get("end"))
 
@@ -283,7 +308,7 @@ class Refiner:
                     labels[t] = lab
             stints.append(Stint(
                 person_id=m["person_id"], name=m["person_name"] or "?", start=s, end=e,
-                roles=role_words(m.get("attributes")) or self._role_for(m["person_id"]),
+                roles=self._roles(m),
                 start_label=sl, end_label=el,
                 original="original" in [(a or "").lower() for a in m.get("attributes") or []],
             ))
@@ -351,6 +376,12 @@ class Refiner:
             if not cur.after_gap and cur.end - cur.start <= 0.26 and cur_ids < prev_ids:
                 prev.end = cur.end
                 del lineups[i]
+                # and the same line-up after the vacancy is the same line-up (Guigsy's two
+                # months off in 1995 left Oasis drawn twice)
+                if (i < len(lineups) and not lineups[i].after_gap
+                        and {m.person_id for m in lineups[i].members} == prev_ids):
+                    prev.end = lineups[i].end
+                    del lineups[i]
             else:
                 i += 1
         # Too many line-ups to draw: merge the shortest into its neighbour,

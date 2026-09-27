@@ -120,3 +120,39 @@ def test_undated_members_stay_when_most_of_the_band_is_undated():
     tree = Refiner(today=2026.5).build({"root_id": "mi5", "root_name": "M I 5", "root_bands": ["mi5"],
                                         "band_levels": {"mi5": 0}, "records": records})
     assert len(tree.bands["mi5"].lineups[0].members) == 5 and tree.bands["mi5"].undated == []
+
+
+def test_a_secondary_role_alone_takes_the_musicians_principal_instrument():
+    from app.refiner import Refiner
+    band = lambda mbid, name: {"mbid": mbid, "name": name, "type": "Group", "begin": "1991", "end": None, "ended": False}
+    m = lambda pid, name, bid, bname, attrs, begin="1991", end=None: {
+        "person_id": pid, "person_name": name, "band_id": bid, "band_name": bname,
+        "begin": begin, "end": end, "ended": end is not None, "attributes": attrs}
+    oasis = dict(band("o", "Oasis"), memberships=[
+        m("liam", "Liam Gallagher", "o", "Oasis", ["original", "tambourine"], "1991", "2009"),
+        m("noel", "Noel Gallagher", "o", "Oasis", ["background vocals"], "1991", "2009"),
+        m("noel", "Noel Gallagher", "o", "Oasis", ["guitar"], "2025"),
+        m("joey", "Joey Waronker", "o", "Oasis", ["drums", "touring"], "2025")])
+    beady = dict(band("b", "Beady Eye"), memberships=[m("liam", "Liam Gallagher", "b", "Beady Eye", ["lead vocals"], "2009", "2014")])
+    harvest = {"root_id": "o", "root_name": "Oasis", "root_bands": ["o"], "band_levels": {"o": 0, "b": 1},
+               "records": {"o": oasis, "b": beady}}
+    tree = Refiner(today=2026.7).build(harvest)
+    roles = {s.name: s.roles[0] for s in tree.bands["o"].stints if s.start < 2000}
+    assert roles == {"Liam Gallagher": "vocals", "Noel Gallagher": "guitar"}
+    assert "Joey Waronker" not in {s.name for s in tree.bands["o"].stints}  # touring: not a member
+
+
+def test_a_brief_absence_does_not_draw_the_line_up_twice():
+    from app.refiner import Refiner
+    m = lambda pid, name, attrs, begin, end=None: {
+        "person_id": pid, "person_name": name, "band_id": "o", "band_name": "Oasis",
+        "begin": begin, "end": end, "ended": end is not None, "attributes": attrs}
+    oasis = {"mbid": "o", "name": "Oasis", "type": "Group", "begin": "1991", "end": "2009", "ended": True,
+             "memberships": [m("liam", "Liam Gallagher", ["lead vocals"], "1991-06", "2009-08"),
+                             m("guigsy", "Paul McGuigan", ["bass"], "1991-06", "1995-09"),
+                             m("guigsy", "Paul McGuigan", ["bass"], "1995-11", "1999-08"),
+                             m("gem", "Gem Archer", ["guitar"], "1999-11", "2009-08")]}
+    harvest = {"root_id": "o", "root_name": "Oasis", "root_bands": ["o"], "band_levels": {"o": 0}, "records": {"o": oasis}}
+    lineups = Refiner(today=2026.7).build(harvest).bands["o"].lineups
+    sets = [tuple(m.person_id for m in lu.members) for lu in lineups]
+    assert all(a != b for a, b in zip(sets, sets[1:])), sets  # never the same line-up twice in a row
