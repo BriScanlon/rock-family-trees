@@ -210,3 +210,66 @@ def test_an_event_dated_to_month_zero_still_draws():
            "text": "Played a club so small the drummer set up in the car park outside."}
     tree, L = _layout_with_events([odd])
     assert all("1966" in e["heading"] for e in L["events"])
+
+
+class FakeRanker:
+    """Answers the rating pass: the fire 5, everything else 2."""
+    def __init__(self):
+        self.calls, outer = 0, self
+
+        class Messages:
+            def create(self, **kw):
+                outer.calls += 1
+                listing = kw["messages"][0]["content"]
+                idx = [int(i) for i in re.findall(r"\[(\d+)\]", listing)]
+                body = {"ratings": [{"index": i, "significance": 5 if f"[{i}] Their studio burnt" in listing else 2}
+                                    for i in idx]}
+                return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=json.dumps(body))])
+
+        self.beta = SimpleNamespace(messages=Messages())
+
+
+def test_a_bands_events_are_rated_against_each_other(store):
+    found = [dict(STAGE, significance=5, subject="Mill Sessions"), dict(FIRE, significance=3, subject="Mill Sessions")]
+    fake = FakeRanker()
+    got = events.rank(band(), found, client=fake)
+    assert got[FIRE["text"]] == 5 and got[STAGE["text"]] == 2  # the fire, not the stage, is the story
+    events.rank(band(), found, client=fake)
+    assert fake.calls == 1                 # stored, not asked again
+    assert store.latest_notes("x") is None  # ratings aren't the band's notes
+
+
+def test_background_reading_gives_way_to_a_poster(tmp_path, monkeypatch):
+    from app import narrative
+    monkeypatch.setattr(narrative, "LOCK_DIR", str(tmp_path))
+    assert not narrative._poster_waiting()
+    with narrative.foreground():
+        assert narrative._poster_waiting()  # background requests wait now
+    assert not narrative._poster_waiting()  # and go on once the poster is made
+
+
+def test_a_poster_waits_only_for_its_top_bands(monkeypatch, store):
+    """The rest of the family is recalled from what's stored: no model."""
+    from app import content
+    from app.refiner import Band
+
+    bands = [Band(id=f"b{i}", name=f"B{i}", start=1970, end=1980) for i in range(5)]
+
+    class Tree:
+        def __init__(self):
+            self.bands = {b.id: b for b in bands}
+
+    monkeypatch.setattr(content, "Refiner", lambda **kw: SimpleNamespace(build=lambda h: Tree()))
+    monkeypatch.setattr(events, "EVENT_BANDS", 2)
+    read = []
+    monkeypatch.setattr(events, "write_events", lambda band, work, article, **kw: read.append(band.id) or {"notes": []})
+    monkeypatch.setattr(events, "rank", lambda *a, **k: {})
+    import app.wikipedia as W
+    monkeypatch.setattr(W.WikipediaClient, "article", lambda self, t: {"title": t, "text": "x"})
+    records = {b.id: {"mbid": b.id, "name": b.name, "works": [dict(WORK, length=1)],
+                      "events": [{"text": "stored"}] if b.id == "b4" else None} for b in bands}
+    harvest = {"root_id": "b0", "records": records}
+    harvester = SimpleNamespace(store=store)
+    got = content.gather_events(harvester, harvest, {"max_bands": 40}, lambda *a: None)
+    assert read == ["b0", "b1"]                      # only the top two read now
+    assert got["b4"] == [{"text": "stored"}] and got["b3"] == []  # the rest: what's stored, else nothing

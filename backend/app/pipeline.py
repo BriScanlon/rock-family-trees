@@ -38,8 +38,11 @@ def generate(artist_id, job_id, options=None, progress=None):
     progress = progress or (lambda pct, msg: None)
     os.makedirs(ARTIFACT_DIR, exist_ok=True)
 
-    # 1. all the content, built and stored before any placement (issue #8)
-    content = build_content(artist_id, opts, progress)
+    # 1. all the content, built and stored before any placement (issue #8); background
+    #    reading of the family waits while a poster is being made
+    from app import narrative
+    with narrative.foreground():
+        content = build_content(artist_id, opts, progress)
     lettering = content.lettering
 
     # 2. then the placement
