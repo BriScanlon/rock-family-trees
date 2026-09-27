@@ -68,8 +68,11 @@ SCHEMA = {
 }
 
 
+CHECKS = "repair+context"  # how events are checked: a change here means reading afresh
+
+
 def prompt_id():
-    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}".encode()).hexdigest()[:8]
+    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}|{CHECKS}".encode()).hexdigest()[:8]
 
 
 def events_key(work, revision, model):
@@ -113,8 +116,12 @@ def write_events(band, work, article, client=None, use_cache=True, store=None):
     found = json.loads(raw).get("events", [])
     for e in found:
         e["significance"] = max(1, min(5, int(e.get("significance") or 1)))
-    kept, dropped = narrative.check(found, reference, max_chars=EVENT_CHARS)
-    kept, unsupported = narrative.verify(kept, client)
+    kept, dropped = narrative.check(found, reference, max_chars=EVENT_CHARS, repair=True)
+    # checked against the source and the sentences either side of it
+    widened = [dict(n, source=narrative.context(n["source"], reference)) for n in kept]
+    ok, unsupported = narrative.verify(widened, client)
+    ok_texts = {n["text"] for n in ok}
+    kept = [n for n in kept if n["text"] in ok_texts]
     result = {"notes": kept, "dropped": dropped + unsupported, "model": model, "prompt": prompt_id(),
               "subject": work, "lineups": None,
               "source": {"title": article["title"], "url": article.get("url"), "revision": article.get("revision")}}

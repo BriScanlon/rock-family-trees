@@ -182,3 +182,22 @@ def test_a_minor_detail_is_not_placed():
              "text": "Reissued on coloured vinyl with two bonus tracks for the anniversary."}
     tree, L = _layout_with_events([minor])
     assert L["events"] == []
+
+
+def test_a_misquoted_source_is_found_in_the_article(store):
+    reworded = dict(FIRE, source="The album was recorded at an old mill in Hebden Bridge after the band's studio burned down during a Frank Zappa concert next door.")
+    got = events.write_events(band(), WORK, ARTICLE, client=FakeModel([reworded]))
+    assert [e["text"] for e in got["notes"]] == [FIRE["text"]]
+    assert got["notes"][0]["source"] == FIRE["source"]  # the article's own sentence, not the misquote
+
+
+def test_a_fact_from_the_next_sentence_still_counts():
+    from app import narrative
+    text = ARTICLE["text"]
+    ctx = narrative.context(FIRE["source"], text)
+    assert "stage collapsed" in ctx and "Frank Zappa" in ctx
+
+
+def test_a_made_up_source_is_not_repaired(store):
+    got = events.write_events(band(), WORK, ARTICLE, client=FakeModel([INVENTED]))
+    assert got["notes"] == []
