@@ -198,9 +198,13 @@ class Artist:
             if b["overflow"]:
                 last = max(b["members"], key=lambda m: m["cx"])
                 self._text(last["cx"] + ls["col_w"] / 2, b["y"] + b["h"], f"+ {b['overflow']} more", ROLE_SIZE, "end")
-            # a paragraph of notes beside the line-up
-            for i, note in enumerate(b["notes"]):
-                self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
+            # a paragraph of notes: under the band name (Frame's grid) or beside the line-up
+            if b.get("notes_y") is not None:
+                for i, note in enumerate(b["notes"]):
+                    self._text(b["notes_x"], b["notes_y"] + NOTE_SIZE + i * NOTE_LINE, note, NOTE_SIZE, halo=True)
+            else:
+                for i, note in enumerate(b["notes"]):
+                    self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
 
     def _footer(self, W, H):
         fy = self.L["footer_y"]

@@ -1,6 +1,7 @@
 """Turns harvested MusicBrainz records into a family-tree model:
 bands -> numbered line-ups -> members, plus who died when and which bands
 to keep. Times are fractional years (1966.25 == April 1966)."""
+import math
 from collections import Counter, defaultdict
 from datetime import date
 from typing import Dict, List, Optional
@@ -76,6 +77,13 @@ def _role_rank(roles):
     return len(ROLE_ORDER)
 
 
+FOUNDER_YEARS = 10   # a founder's minimum tenure in the band they founded
+MOVE_YEARS = 2       # left one band and joined the other within this: a direct move
+MOVE_BONUS = 2.0
+SIDE_PROJECT = 0.3
+UNDATED_YEARS = 0.25  # what an undated membership counts for when ranking bands
+
+
 class Stint(BaseModel):
     person_id: str
     name: str
@@ -84,6 +92,7 @@ class Stint(BaseModel):
     roles: List[str] = []
     start_label: Optional[str] = None
     end_label: Optional[str] = None
+    original: bool = False  # a founder member (MusicBrainz "original")
 
 
 class LineupMember(BaseModel):
@@ -213,6 +222,7 @@ class Refiner:
             stints.append(Stint(
                 person_id=m["person_id"], name=m["person_name"] or "?", start=s, end=e,
                 roles=role_words(m.get("attributes")), start_label=sl, end_label=el,
+                original="original" in [(a or "").lower() for a in m.get("attributes") or []],
             ))
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
@@ -292,38 +302,57 @@ class Refiner:
 
     # -- selection ------------------------------------------------------
     def _select(self, bands, root_bands):
+        """The root band(s), then the bands most strongly linked to those
+        already chosen, a generation at a time. A link is a musician both
+        bands share, worth more the longer they served on each side (the
+        geometric mean of the two tenures), double if they moved straight
+        from one band to the other (the family's lineage: Nirvana to Foo
+        Fighters) and less than a third if the candidate was a side project
+        running alongside the chosen band. A founder counts as long-serving
+        in the band they founded even if their dates say otherwise."""
         chosen = {b: bands[b] for b in root_bands if b in bands}
         if not chosen:
             return {}
-        people_in = lambda b: {s.person_id for s in b.stints}
-        chosen_people = set().union(*(people_in(b) for b in chosen.values()))
-        # Years each musician served in the bands chosen so far: a band linked
-        # through a 36-year singer matters more than one linked by a stand-in.
-        tenure = defaultdict(float)
+        tenure = defaultdict(float)   # years each musician served in the bands chosen so far
+        served = defaultdict(list)    # their stints in those bands
 
-        def add_tenure(band):
+        def add(band):
             for st in band.stints:
-                tenure[st.person_id] += st.end - st.start
+                years = st.end - st.start
+                if st.original:
+                    years = max(years, min(FOUNDER_YEARS, band.end - band.start))
+                tenure[st.person_id] += years
+                served[st.person_id].append(st)
 
         for b in chosen.values():
-            add_tenure(b)
+            add(b)
+
+        def strength(band):
+            total = 0.0
+            for pid in {s.person_id for s in band.stints} & set(tenure):
+                here = [s for s in band.stints if s.person_id == pid]
+                # an undated membership is filled in with the band's whole life
+                # when drawn; as evidence of a link it is worth only a little
+                years_here = sum(s.end - s.start if (s.start_label or s.end_label) else UNDATED_YEARS
+                                 for s in here)
+                link = math.sqrt(tenure[pid] * max(years_here, 0.25))
+                there = served[pid]
+                direct = any(0 <= t.start - h.end <= MOVE_YEARS or 0 <= h.start - t.end <= MOVE_YEARS
+                             for h in here for t in there)
+                alongside = any(min(h.end, t.end) - max(h.start, t.start) > 1 for h in here for t in there)
+                total += link * (MOVE_BONUS if direct else SIDE_PROJECT if alongside else 1.0)
+            return total
 
         rest = [b for b in bands.values() if b.id not in chosen]
         for level in sorted({b.level for b in rest}):
-            candidates = []
-            for b in rest:
-                if b.level != level:
-                    continue
-                shared = people_in(b) & chosen_people
-                if shared:
-                    candidates.append((sum(tenure[p] for p in shared), b))
+            candidates = [(strength(b), b) for b in rest if b.level == level]
+            candidates = [c for c in candidates if c[0] > 0]
             candidates.sort(key=lambda c: (-c[0], c[1].start, c[1].name))
             for _, b in candidates:
                 if len(chosen) >= self.max_bands:
                     return chosen
                 chosen[b.id] = b
-                chosen_people |= people_in(b)
-                add_tenure(b)
+                add(b)
         return chosen
 
 

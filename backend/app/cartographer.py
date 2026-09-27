@@ -68,6 +68,12 @@ class Cartographer:
 
     # ------------------------------------------------------------------
     def layout(self):
+        if not self.timeline:
+            # Frame's own layout: a grid of member-wide columns and era rows (app/grid.py)
+            from app.grid import GridLayout
+            return GridLayout(self.tree, paper="auto" if self.auto_paper else self.paper,
+                              subtitle=self.subtitle, lettering=self.ls["name"]).layout()
+        # With a year scale: a strict time grid, one lane per band
         bands = sorted(self.tree.bands.values(), key=lambda b: (b.start, b.name))
         if not bands:
             raise ValueError("Nothing to draw: no band line-ups with usable dates were found")
@@ -78,9 +84,8 @@ class Cartographer:
         for box in self.boxes.values():
             box["lane"] = lanes[box["band_id"]]
         self._layout_notes()
-        # A strict time grid is only needed when a year scale is drawn; otherwise
-        # each lane packs tightly, as Frame's trees do (every line-up is dated).
-        anchors = self._assign_rows() if self.timeline else self._compact_rows()
+        anchors = self._assign_rows()
+        self._lane_neighbours()
         content_w = self._lane_x(self.lane_count) + self.axis_w + MARGIN
         if self.auto_paper:
             content_h = max(b["y"] + b["footprint"] for b in self.boxes.values()) + 60
@@ -130,6 +135,24 @@ class Cartographer:
                     out[m.person_id].append((band, lu))
         for apps in out.values():
             apps.sort(key=lambda a: (a[1].start, a[0].start, a[0].name))
+        return out
+
+    def _moves(self):
+        """(person, from block, to block) for each step of every musician's
+        path. A musician who carries on in a band while playing in another (a
+        side project) continues from their last line-up in that band, not
+        from the side project: side projects hang off a band without holding
+        up its later line-ups."""
+        out = []
+        for person_id, apps in self.appearances.items():
+            last, prev = {}, None
+            for band, lu in apps:
+                box = self.boxes[f"{band.id}#{lu.number}"]
+                before = last.get(band.id)
+                src = before if before is not None and before["number"] == lu.number - 1 else prev
+                if src is not None and src is not box:
+                    out.append((person_id, src, box))
+                last[band.id], prev = box, box
         return out
 
     @staticmethod
@@ -219,16 +242,18 @@ class Cartographer:
         cxs = [m["cx"] for m in box["members"]] or [x + self.ls["col_w"] / 2]
         box["bar"] = (min(x, min(cxs) - 12), max(cxs) + 12)
 
-    def _layout_notes(self):
+    def _layout_notes(self, by_lane=True):
         """Put each line-up's notes in the spare room to the right of its
         members when there is enough, otherwise in a notes column beside the
-        lane. Only lanes that need the column get one."""
+        block. With `by_lane` the room is the lane's width (lanes are known);
+        otherwise the band's own width, as the lanes are chosen afterwards."""
         lane_content = defaultdict(float)
+        if by_lane:
+            for b in self.boxes.values():
+                lane_content[b["lane"]] = max(lane_content[b["lane"]], b["content_w"])
+            self.lane_w = [0] * self.lane_count
         for b in self.boxes.values():
-            lane_content[b["lane"]] = max(lane_content[b["lane"]], b["content_w"])
-        self.lane_w = [0] * self.lane_count
-        for b in self.boxes.values():
-            lc = lane_content[b["lane"]]
+            lc = lane_content[b["lane"]] if by_lane else b["content_w"]
             spare = lc - b["members_w"] - NOTE_GAP
             if not b["notes_text"]:
                 b["notes"], b["notes_dx"], width = [], lc, lc
@@ -240,26 +265,20 @@ class Cartographer:
                 b["notes_dx"], width = lc + NOTE_GAP, lc + NOTE_GAP + NOTE_W
             b["footprint"] = max(b["h"], HEADER_H + 2 + len(b["notes"]) * NOTE_LINE)
             b["w"] = width
-            self.lane_w[b["lane"]] = max(self.lane_w[b["lane"]], width)
+            if by_lane:
+                self.lane_w[b["lane"]] = max(self.lane_w[b["lane"]], width)
 
-    def _compact_rows(self):
-        """Pack each lane tightly. Time order is kept where it matters: a
-        line-up sits below the previous one in its lane and below every
-        line-up its musicians arrive from."""
-        order = sorted(self.boxes.values(), key=lambda b: (b["start"], b["band_start"], b["band_name"], b["number"]))
-        sources = defaultdict(list)
-        for apps in self.appearances.values():
-            for (ba, la), (bb, lb) in zip(apps, apps[1:]):
-                a, b = self.boxes[f"{ba.id}#{la.number}"], self.boxes[f"{bb.id}#{lb.number}"]
-                if a is not b and a["lane"] != b["lane"]:
-                    sources[b["id"]].append(a)
-        lane_bottom = defaultdict(lambda: -math.inf)
-        for b in order:
-            y = max([TITLE_H, lane_bottom[b["lane"]] + V_GAP] +
-                    [a["y"] + a["footprint"] + EDGE_GAP for a in sources[b["id"]] if "y" in a])
-            b["y"] = y
-            lane_bottom[b["lane"]] = y + b["footprint"]
-        return sorted((b["start"], b["y"]) for b in order)
+    def _lane_neighbours(self):
+        """The block directly below each block in its lane: a musician's line
+        only runs straight down when nothing else sits in between."""
+        by_lane = defaultdict(list)
+        for b in self.boxes.values():
+            by_lane[b["lane"]].append(b)
+        self.below = {}
+        for boxes in by_lane.values():
+            boxes.sort(key=lambda b: b["y"])
+            for a, b in zip(boxes, boxes[1:]):
+                self.below[a["id"]] = b["id"]
 
     def _choose_paper(self, w, h):
         """Smallest sheet on which the smallest text prints at MIN_PRINT_PT or more."""
@@ -420,7 +439,7 @@ class Cartographer:
         for band in bands:
             boxes = [self.boxes[f"{band.id}#{lu.number}"] for lu in band.lineups]
             for a, b in zip(boxes, boxes[1:]):
-                if a["lane"] != b["lane"]:
+                if self.below.get(a["id"]) != b["id"]:
                     continue
                 for ma in a["members"]:
                     mb = self._member(b, ma["person_id"])
@@ -444,17 +463,13 @@ class Cartographer:
             lane_boxes[b["lane"]].append((b["y"] - 12, b["y"] + b["footprint"] + 6))
 
         pairs = []
-        for person_id, apps in self.appearances.items():
-            for (ba, la), (bb, lb) in zip(apps, apps[1:]):
-                A = self.boxes[f"{ba.id}#{la.number}"]
-                B = self.boxes[f"{bb.id}#{lb.number}"]
-                if A is B:
-                    continue
-                if ba.id == bb.id and lb.number == la.number + 1 and A["lane"] == B["lane"]:
-                    continue  # drawn as a straight continuity line
-                if self._member(A, person_id) is None or self._member(B, person_id) is None:
-                    continue  # beyond MAX_MEMBERS
-                pairs.append((person_id, A, B, ba.id == bb.id))
+        for person_id, A, B in self._moves():
+            same_band = A["band_id"] == B["band_id"]
+            if same_band and B["number"] == A["number"] + 1 and self.below.get(A["id"]) == B["id"]:
+                continue  # drawn as a straight continuity line
+            if self._member(A, person_id) is None or self._member(B, person_id) is None:
+                continue  # beyond MAX_MEMBERS
+            pairs.append((person_id, A, B, same_band))
 
         out_count, in_count = defaultdict(int), defaultdict(int)
         edges = []
