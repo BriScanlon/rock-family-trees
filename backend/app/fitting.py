@@ -47,6 +47,29 @@ def _compose(trees, chosen):
     return full.model_copy(update={"bands": {k: trees[cap].bands[k] for k, cap in chosen.items()}})
 
 
+# placement pulls (era, top, near) tried for the final layout, each from the left and the right
+ARRANGEMENTS = [(1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
+
+
+def _fullest(tree, paper, lettering, subtitle=None):
+    """The same bands, arranged several ways: keep the layout that covers the
+    most of the page (Frame's trees are all but solid ink)."""
+    from app.grid import coverage
+    cols, rows, _, _ = GridLayout.sheet(paper, dict(STYLES.get(lettering, STYLES["classic"])))
+    best = None
+    for weights in ARRANGEMENTS:
+        for mirror in (False, True):
+            grid = GridLayout(tree, paper=paper, subtitle=subtitle, lettering=lettering, cols=cols, rows=rows,
+                              weights=weights, mirror=mirror)
+            if not grid.fits():
+                continue
+            layout = grid.layout()
+            score = coverage(layout)
+            if best is None or score > best[0]:
+                best = (score, layout)
+    return best[1] if best else _grid(tree, paper, lettering, subtitle).layout()
+
+
 def _grid(tree, paper, lettering, subtitle=None):
     cols, rows, _, _ = GridLayout.sheet(paper, dict(STYLES.get(lettering, STYLES["classic"])))
     return GridLayout(tree, paper=paper, subtitle=subtitle, lettering=lettering, cols=cols, rows=rows)
@@ -106,7 +129,7 @@ def select(trees, paper, lettering="classic"):
 
 
 def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, lettering="classic",
-             stories=None, **layout_kw):
+             stories=None, albums=None, **layout_kw):
     """Returns (tree, layout, fit) where fit describes anything left out.
     `stories`: {band id: dated notes from app/narrative.py}, drawn with the line-ups."""
     trees = {cap: Refiner(max_bands=max_bands, max_lineups_per_band=cap).build(harvest, title=title)
@@ -114,6 +137,7 @@ def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, le
     for tree in trees.values():  # the notes count towards each block's size, so they go in before fitting
         for band in tree.bands.values():
             band.stories = (stories or {}).get(band.id, [])
+            band.albums = (albums or {}).get(band.id, [])
     full = trees[LINEUP_CAPS[0]]
     if not full.bands:
         return full, None, {}
@@ -148,7 +172,7 @@ def fit_tree(harvest, paper="auto", max_bands=24, title=None, timeline=False, le
         tree = _subset(trees[LINEUP_CAPS[-1]], 1)
         return result(tree, GridLayout(tree, paper=paper, lettering=lettering, **layout_kw).layout())
     tree = _compose(trees, chosen)
-    return result(tree, _grid(tree, paper, lettering, **layout_kw).layout())
+    return result(tree, _fullest(tree, paper, lettering, **layout_kw))
 
 
 def _fit_lanes(trees, paper, **layout_kw):

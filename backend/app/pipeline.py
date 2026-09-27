@@ -15,7 +15,7 @@ NARRATIVE_BANDS = int(os.getenv("NARRATIVE_BANDS", "8"))  # the top-ranked bands
 
 class Options(dict):
     DEFAULTS = {
-        "depth": 2, "max_bands": 24, "title": None, "subtitle": None, "paper": "auto",
+        "depth": 2, "max_bands": 40, "title": None, "subtitle": None, "paper": "auto",
         "hand_drawn": False, "coloured_lines": False, "aged_paper": False, "timeline": False,
         "lettering": "auto",
         "notes": True,  # notes written from Wikipedia (app/narrative.py)
@@ -67,6 +67,26 @@ def gather_stories(harvester, harvest, opts, progress):
     return out
 
 
+def gather_albums(harvester, harvest, opts, progress):
+    """Studio albums for the ranked bands ({band id: ["1972 Machine Head", ...]}),
+    which fill the gaps on the poster as Frame's discographies did. Looked up
+    once per band and kept on its record (Neo4j)."""
+    from app.refiner import Refiner
+    out = {}
+    for band in Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values():
+        record = harvest["records"].get(band.id) or {}
+        albums = record.get("albums")
+        if albums is None and not band.id.startswith("demo:"):
+            progress(74, f"Looking up {band.name}'s albums")
+            try:
+                albums = harvester._client().get_albums(band.id)
+                harvester.store.put(dict(record, albums=albums))
+            except Exception as e:
+                print(f"No albums for {band.name}: {type(e).__name__}: {e}")
+        out[band.id] = albums or []
+    return out
+
+
 def generate(artist_id, job_id, options=None, progress=None):
     opts = options if isinstance(options, Options) else Options(**(options or {}))
     progress = progress or (lambda pct, msg: None)
@@ -85,10 +105,11 @@ def generate(artist_id, job_id, options=None, progress=None):
         lettering = lettering_for(genres)
 
     stories = gather_stories(harvester, harvest, opts, progress) if opts["notes"] else {}
+    albums = gather_albums(harvester, harvest, opts, progress)
 
     progress(75, "Working out who played with whom, and how much fits on the paper")
     tree, layout, fit = fit_tree(harvest, paper=opts["paper"], max_bands=opts["max_bands"], title=opts["title"],
-                                 timeline=opts["timeline"], lettering=lettering, stories=stories)
+                                 timeline=opts["timeline"], lettering=lettering, stories=stories, albums=albums)
     if not tree.bands:
         raise ValueError(f"No dated band line-ups found for {harvest['root_name']} on MusicBrainz")
 

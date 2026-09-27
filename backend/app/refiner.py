@@ -130,6 +130,8 @@ class Band(BaseModel):
     lineups: List[Lineup] = []
     undated: List[str] = []  # members MusicBrainz gives no dates for, left out of the line-ups
     stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
+    albums: List[str] = []  # studio albums, "1972 Machine Head" (MusicBrainz)
+    genres: List[str] = []
 
 
 class Person(BaseModel):
@@ -137,6 +139,7 @@ class Person(BaseModel):
     name: str
     died: Optional[float] = None
     died_label: Optional[str] = None
+    bands: List[str] = []  # every band they played in, as MusicBrainz knows it (earliest first)
 
 
 class FamilyTree(BaseModel):
@@ -182,6 +185,15 @@ class Refiner:
                 bands[band_id] = band
             for s in (band.stints if band else []):
                 people.setdefault(s.person_id, Person(id=s.person_id, name=s.name))
+
+        # each musician's whole career, for the notes in the gaps ("also played with ...")
+        career = defaultdict(dict)
+        for rec in records.values():
+            for m in rec.get("memberships", []):
+                year = parse_date(m.get("begin"))[0] or 9999
+                career[m["person_id"]][m["band_name"]] = min(year, career[m["person_id"]].get(m["band_name"], 9999))
+        for pid, person in people.items():
+            person.bands = [n for n, _ in sorted(career.get(pid, {}).items(), key=lambda kv: (kv[1], kv[0])) if n]
 
         selected = self._select(bands, harvest.get("root_bands", []))
         root_name = harvest.get("root_name", "")
@@ -266,7 +278,8 @@ class Refiner:
             ))
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
-                    ended=ended, stints=stints, undated=list(dict.fromkeys(undated)))
+                    ended=ended, stints=stints, undated=list(dict.fromkeys(undated)),
+                    genres=list(rec.get("genres") or [])[:3])
         band.lineups = self._lineups(band, labels)
         return band
 

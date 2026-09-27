@@ -26,11 +26,19 @@ from app.narrative import lineup_for
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
+PANEL_MIN_UNITS = 6     # narrowest text panel: three members' width
+PANEL_PAD = 14          # margin inside a gap before a panel's text
+PANEL_HEAD = 30         # a panel section's band-name heading
+PANEL_GAP = 12          # space between two bands' sections in a panel
+PANEL_CAREERS = 3       # longest-serving members whose other bands a panel lists
+PANEL_ROW_WEIGHT = 4    # a row is ~4 half-member columns tall: weigh rows by that when comparing areas
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
 LINE_STEP = 5           # separation of parallel lines in a channel or gap
 PACK_REPAIRS = 40       # rounds of re-placing to turn upward moves downwards
+MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the sheet's edges
+MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
 MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
 ERA_WEIGHT = 1.5        # pull towards the row where line-ups of the same date sit
 TOP_WEIGHT = 0.3        # pull towards the top: keep the tree compact
@@ -71,13 +79,73 @@ def _slack(*labels):
     return 1.0 if any(l and l.strip().isdigit() for l in labels) else MONTH
 
 
+def _largest_rectangle(free, rows, c_lo, c_hi, min_width=1):
+    """The largest block of free cells at least min_width wide: ((first row,
+    first col), (last row, col after last)), or None. Histogram method."""
+    heights = {c: 0 for c in range(c_lo, c_hi)}
+    best, best_area = None, 0
+    for t in rows:
+        for c in range(c_lo, c_hi):
+            heights[c] = heights[c] + 1 if (t, c) in free else 0
+        stack = []  # (start column, height)
+        for c in list(range(c_lo, c_hi)) + [c_hi]:
+            h = heights.get(c, 0) if c < c_hi else 0
+            start = c
+            while stack and stack[-1][1] >= h:
+                s, sh = stack.pop()
+                area = sh * PANEL_ROW_WEIGHT * (c - s)
+                if sh > 0 and c - s >= min_width and area > best_area:
+                    best_area, best = area, ((t - sh + 1, s), (t, c))
+                start = s
+            stack.append((start, h))
+    return best
+
+
+def _recorded(band, lineup):
+    """ "Recorded Machine Head (1972), Who Do We Think We Are (1973)." for the
+    albums released while this line-up was together (a release year sits
+    mid-year, so it lands on the line-up running then)."""
+    from app.narrative import lineup_for
+    mine = [a for a in band.albums if a[:4].isdigit() and lineup_for(band.lineups, int(a[:4]) + 0.5) is lineup]
+    if not mine:
+        return None
+    return "Recorded " + ", ".join(f"{a.split(' ', 1)[1]} ({a[:4]})" for a in mine) + "."
+
+
+def _fit_albums(item, width, n_lines):
+    """As many albums as fit in n_lines (whole titles), then an ellipsis."""
+    head, albums = item.split(": ", 1)
+    parts = albums.split(" · ")
+    for k in range(len(parts), 0, -1):
+        text = f"{head}: " + " · ".join(parts[:k]) + ("" if k == len(parts) else " …")
+        lines = wrap(text, HAND, NOTE_SIZE, width)
+        if len(lines) <= n_lines:
+            return lines
+    return []
+
+
+def coverage(layout):
+    """Share of the drawing area (inside the margins, below the title, above the
+    key) covered by line-ups and by the text in the panels: how full the page is."""
+    area = (layout["width"] - 2 * MARGIN) * (layout["footer_y"] - 30 - TITLE_H)
+    ink = sum(b["w"] * b["h"] for b in layout["boxes"])
+    ink += sum(p["w"] * sum(PANEL_HEAD + len(sec["lines"]) * NOTE_LINE + PANEL_GAP for sec in p["sections"])
+               for p in layout.get("panels", []))
+    return ink / area if area > 0 else 0.0
+
+
 class GridLayout(Cartographer):
-    def __init__(self, tree, paper="auto", subtitle=None, lettering="classic", cols=None, rows=None):
+    def __init__(self, tree, paper="auto", subtitle=None, lettering="classic", cols=None, rows=None,
+                 weights=None, mirror=False):
         super().__init__(tree, paper=paper, subtitle=subtitle, timeline=False, lettering=lettering)
         self.slot, self.title_h, self.bar_dy, self.block_h = _dims(self.ls)
         self.unit = self.slot / 2
         self.row_h = self.block_h + CHANNEL
         self.max_cols, self.max_rows = cols, rows
+        # (era, top, near) pulls on placement, and whether to fill from the right:
+        # the fitting tries several and keeps the fullest page
+        self.era_w, self.top_w, self.near_w = weights or (ERA_WEIGHT, TOP_WEIGHT, NEAR_WEIGHT)
+        self.mirror = mirror
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -159,15 +227,19 @@ class GridLayout(Cartographer):
                                  f"{f' and {len(band.undated) - BRIEF_NAMES} others' if len(band.undated) > BRIEF_NAMES else ''}."]
             # the notes written from Wikipedia (what the lines can't show) come first
             told_here = [s["text"].rstrip(".") + "." for s in band.stories if lineup_for(band.lineups, s["year"]) is lu]
-            notes = " ".join((told_here + said + extra)[:MAX_NOTES])
+            recorded = _recorded(band, lu)  # this line-up's albums, as Frame listed them in the block
+            notes = " ".join((told_here + ([recorded] if recorded else []) + said + extra)[:MAX_NOTES])
+            # the block widens for its story, not its album list (which a panel can carry)
+            story = " ".join((told_here + said + extra)[:MAX_NOTES])
             widest = span + NOTE_WIDEN
-            while span < widest and len(wrap(notes, HAND, NOTE_SIZE, span * slot - 8)) > NOTE_LINES:
+            while span < widest and len(wrap(story, HAND, NOTE_SIZE, span * slot - 8)) > NOTE_LINES:
                 span += 1
             box = {"id": f"{band.id}#{lu.number}", "band_id": band.id, "band_name": band.name, "number": lu.number,
                    "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
                    "dates": dates, "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
-                   "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu}
+                   "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu,
+                   "recorded": recorded}
             self.boxes[box["id"]] = box
             self.box_order.append(box["id"])
             if i == 0 or lu.after_gap:
@@ -298,8 +370,8 @@ class GridLayout(Cartographer):
                 era = sum(abs(r - e) for r, e in zip(rows, era_rows)) / len(rows)
                 near = sum(k * abs(c0 - c) for c, k in links) / max(1, sum(k for _, k in links))
                 near += 3 * min((abs(c0 - c) for c in own), default=0)  # a re-formed band returns to its columns
-                cost = ((rows[-1] - rows[0]) + TOP_WEIGHT * rows[0] + ERA_WEIGHT * era
-                        + NEAR_WEIGHT * near + 0.001 * c0)
+                cost = ((rows[-1] - rows[0]) + self.top_w * rows[0] + self.era_w * era
+                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0))
                 if best is None or cost < best[0]:
                     best = (cost, c0, rows)
             if best is None:
@@ -362,6 +434,12 @@ class GridLayout(Cartographer):
         content_h = TITLE_H + used_rows * self.row_h + FOOTER_H
         if self.max_cols is not None:  # the sheet itself, at the smallest readable size
             width, height = self._sheet_px()
+            # Where the drawing doesn't need the whole sheet, draw it larger to
+            # fill it, rather than leave strips down the sides too narrow to use:
+            # the canvas shrinks to the drawing (paper-shaped), so everything prints bigger.
+            grow = min(width / content_w, height / content_h, MAX_GROW)
+            if grow > 1:
+                width, height = width / grow, height / grow
             pitch = self.row_h + min(MAX_SPREAD * self.row_h,
                                      max(0.0, (height - content_h) / max(1, used_rows)))
         else:
@@ -370,14 +448,18 @@ class GridLayout(Cartographer):
             width, height, _ = self._paper_size(content_w, content_h)
             pitch = self.row_h + min(MAX_SPREAD * self.row_h,
                                      max(0.0, (height - content_h) / max(1, used_rows)))
-        x0 = (width - used_cols * unit) / 2
+        # spread the columns sideways (wider gutters, blocks unchanged) to reach the
+        # sheet's edges rather than leave strips down the sides too narrow to use
+        self.hs = min(MAX_HSPREAD, max(1.0, (width - 2 * MARGIN) / (used_cols * unit)))
+        x0 = (width - used_cols * unit * self.hs) / 2
+        self.x0 = x0
         row_y = lambda t: TITLE_H + t * pitch
         self.pitch = pitch
 
         boxes = []
         for b in placed:
             t, c0 = self._tier[b["id"]], self._col0[b["id"]]
-            x, y = x0 + c0 * unit, row_y(t)
+            x, y = self._col_x(c0), row_y(t)
             lu = b["lineup"]
             members = []
             for m in lu.members[:MAX_MEMBERS]:
@@ -406,6 +488,8 @@ class GridLayout(Cartographer):
             boxes.append(b)
 
         trunks, edges = self._route(placed, x0, row_y)
+        panels = self._panels(boxes, trunks, edges, x0, row_y, width, height,
+                              self.max_rows or used_rows)
         years = []
         for t in range(used_rows):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
@@ -419,7 +503,7 @@ class GridLayout(Cartographer):
             "years": years,
             "boxes": [{k: v for k, v in b.items() if k not in ("lineup", "cols")} | {"cols": dict(b["cols"])}
                       for b in boxes],
-            "trunks": trunks, "edges": edges,
+            "trunks": trunks, "edges": edges, "panels": panels,
             "footer_y": height - FOOTER_H + 30,
             "grid": {"cols": self.max_cols or used_cols, "rows": self.max_rows or used_rows,
                      "used_cols": used_cols, "used_rows": used_rows, "unit": unit, "row_h": pitch},
@@ -429,9 +513,126 @@ class GridLayout(Cartographer):
         }
         return layout
 
+    def _col_x(self, c):
+        """Left edge of grid column c on the page."""
+        return self.x0 + c * self.unit * self.hs
+
     def _sheet_px(self):
         cols, rows, W, H = GridLayout.sheet(self.paper, self.ls)
         return W, H
+
+    # ------------------------------------------------------------------
+    def _panels(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """Fill the gaps as Frame did: his trees are all but solid ink (2-3% of
+        the page blank), the gaps between line-ups taken by discographies and
+        more of the story. Find the empty rectangles no line-up or line passes
+        through, largest first, and give each to the nearest band with
+        material left: the notes its blocks had no room for, then its albums."""
+        unit = self.unit
+        step = unit * self.hs
+        c_lo = -int((x0 - MARGIN) // step)
+        c_hi = int((width - MARGIN - x0) // step)
+        bottom = height - FOOTER_H
+        rows = [t for t in range(n_rows) if row_y(t + 1) <= bottom + 1]
+        cell_box = lambda t, c: (self._col_x(c), row_y(t), self._col_x(c + 1), row_y(t + 1))
+        busy = set()
+        for b in boxes:
+            for t in [b["row"]]:
+                for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
+                    busy.add((t, c))
+        for (t, c), what in self._cells.items():
+            busy.add((t, c))
+        for line in list(trunks) + list(edges):
+            pts = line["points"]
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                lx, hx, ly, hy = min(ax, bx) - 6, max(ax, bx) + 6, min(ay, by) - 6, max(ay, by) + 6
+                for t in rows:
+                    for c in range(c_lo, c_hi):
+                        cx0, cy0, cx1, cy1 = cell_box(t, c)
+                        if lx < cx1 and cx0 < hx and ly < cy1 and cy0 < hy:
+                            busy.add((t, c))
+        free = {(t, c) for t in rows for c in range(c_lo, c_hi) if (t, c) not in busy}
+
+        material = self._panel_material(boxes)
+        where = {}
+        for b in boxes:
+            where.setdefault(b["band_id"], []).append((b["x"] + b["w"] / 2, b["y"] + b["h"] / 2))
+        near = lambda band_id, centre: min(((centre[0] - x) ** 2 + (centre[1] - y) ** 2
+                                            for x, y in where.get(band_id, [(1e9, 1e9)])))
+
+        panels = []
+        while material:
+            rect = _largest_rectangle(free, rows, c_lo, c_hi, PANEL_MIN_UNITS)
+            if rect is None:
+                break
+            (t0, c0), (t1, c1) = rect  # inclusive rows, exclusive columns
+            for t in range(t0, t1 + 1):
+                for c in range(c0, c1):
+                    free.discard((t, c))
+            px0, py0 = self._col_x(c0) + PANEL_PAD, row_y(t0) + PANEL_PAD
+            pw = self._col_x(c1) - self._col_x(c0) - 2 * PANEL_PAD
+            ph = row_y(t1 + 1) - row_y(t0) - 2 * PANEL_PAD
+            centre = (px0 + pw / 2, py0 + ph / 2)
+            # sections from the nearest bands in turn, until the panel is full
+            sections, room = [], ph
+            for band_id in sorted(material, key=lambda k: near(k, centre)):
+                capacity = int((room - PANEL_HEAD) // NOTE_LINE)
+                if capacity < 1:
+                    break
+                lines, used = [], 0
+                for item in material[band_id]:
+                    wrapped = wrap(item, HAND, NOTE_SIZE, pw)
+                    if len(lines) + len(wrapped) > capacity:
+                        if item.startswith("ALBUMS: ") and capacity - len(lines) >= 1:
+                            lines += _fit_albums(item, pw, capacity - len(lines))
+                            used += 1
+                        break
+                    lines += wrapped
+                    used += 1
+                if not lines:
+                    continue
+                sections.append({"title": self.tree.bands[band_id].name.upper(), "lines": lines})
+                room -= PANEL_HEAD + len(lines) * NOTE_LINE + PANEL_GAP
+                material[band_id] = material[band_id][used:]
+            for k in [k for k, v in material.items() if not v]:
+                del material[k]
+            if sections:
+                panels.append({"x": px0, "y": py0, "w": pw, "h": ph, "sections": sections})
+        return panels
+
+    def _panel_material(self, boxes):
+        """What each band has to say beyond its blocks, most telling first:
+        the notes its blocks had no room for, where its longest-serving
+        musicians went (or came from) off this poster, its albums, its style."""
+        shown = {}
+        for b in boxes:
+            shown.setdefault(b["band_id"], []).append(" ".join(b["notes"]))
+        on_poster = {b.name for b in self.tree.bands.values()}
+        material = {}
+        for band in self.tree.bands.values():
+            told = " ".join(shown.get(band.id, []))
+            items = [s["text"].rstrip(".") + "." for s in band.stories
+                     if s["text"].rstrip(".")[:40] not in told]
+            tenure = {}
+            for st in band.stints:
+                tenure[st.person_id] = tenure.get(st.person_id, 0) + st.end - st.start
+            for pid in sorted(tenure, key=lambda p: -tenure[p])[:PANEL_CAREERS]:
+                person = self.tree.people.get(pid)
+                elsewhere = [n for n in (person.bands if person else []) if n != band.name and n not in on_poster]
+                if len(elsewhere) >= 2:
+                    shown_names = elsewhere[:BRIEF_NAMES + 2]
+                    more = len(elsewhere) - len(shown_names)
+                    items.append(f"{person.name} also played with {', '.join(shown_names)}"
+                                 f"{f' and {more} more' if more > 0 else ''}.")
+            # a line-up's albums its block had no room for, still said with the line-up that made them
+            for b in sorted((b for b in boxes if b["band_id"] == band.id), key=lambda b: b["start"]):
+                if b.get("recorded") and b["recorded"] not in " ".join(b["notes"]):  # cut short: say it in full
+                    items.append(f"{b['dates'][0].title()} to {b['dates'][1].lower()}: {b['recorded'][0].lower()}{b['recorded'][1:]}")
+            if band.genres:
+                items.append(f"Style: {', '.join(band.genres)}.")
+            if items:
+                material[band.id] = items
+        return material
 
     # ------------------------------------------------------------------
     def _route(self, placed, x0, row_y):
@@ -467,8 +668,9 @@ class GridLayout(Cartographer):
             if tb == ta + 1:
                 pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (mb["cx"], y1), (mb["cx"], b["bar_y"])]
             else:
-                c = self._clear_gap(ta + 1, tb - 1, (mb["cx"] - x0) / self.unit, (ma["cx"] - x0) / self.unit)
-                xg = (x0 + (c + 0.5) * self.unit if c is not None else x0 - MARGIN / 2) + spread(in_gap[c])
+                step = self.unit * self.hs
+                c = self._clear_gap(ta + 1, tb - 1, (mb["cx"] - x0) / step, (ma["cx"] - x0) / step)
+                xg = (self._col_x(c + 0.5) if c is not None else x0 - MARGIN / 2) + spread(in_gap[c])
                 in_gap[c] += 1
                 y2 = channel_y(tb - 1) + spread(in_channel[tb - 1])
                 in_channel[tb - 1] += 1

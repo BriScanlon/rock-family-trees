@@ -99,6 +99,18 @@ class MusicBrainzClient:
             return None
         return normalize_artist(data)
 
+    def get_albums(self, mbid):
+        """A band's studio albums, oldest first: ["1972 Machine Head", ...].
+        One search rather than paging through every release group (Deep
+        Purple has 412, mostly compilations)."""
+        query = f"arid:{mbid} AND primarytype:album AND NOT secondarytype:*"
+        data = self._get("release-group", {"query": query, "limit": 100}) or {}
+        albums = sorted({(rg.get("first-release-date") or "")[:4] + " " + rg["title"]
+                         for rg in data.get("release-groups", [])
+                         if rg.get("primary-type") == "Album" and not rg.get("secondary-types")
+                         and (rg.get("first-release-date") or "")[:4].isdigit()})
+        return albums
+
 
 def normalize_artist(data):
     """Convert a /ws/2/artist/{id}?inc=artist-rels JSON payload into a record."""

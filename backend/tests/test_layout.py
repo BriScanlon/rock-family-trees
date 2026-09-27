@@ -316,3 +316,21 @@ def test_notes_from_wikipedia_land_on_their_line_up_first():
     assert " ".join(box["notes"]).startswith("Clapton quit over the pop direction")
     others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
     assert not any("Clapton quit" in " ".join(b["notes"]) for b in others)
+
+
+def test_albums_go_with_the_line_up_that_made_them():
+    harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=2)
+    from app.fitting import fit_tree
+    from app.narrative import lineup_for
+    albums = {"demo:yardbirds": ["1966 Roger the Engineer", "1967 Little Games"]}
+    tree, L, fit = fit_tree(harvest, paper="A1", albums=albums)
+    yb = tree.bands["demo:yardbirds"]
+    for album, year in (("Roger the Engineer", 1966), ("Little Games", 1967)):
+        target = lineup_for(yb.lineups, year + 0.5)
+        box = next(b for b in L["boxes"] if b["id"] == f"demo:yardbirds#{target.number}")
+        in_block = album in " ".join(box["notes"])
+        in_panel = any(album in " ".join(sec["lines"]) for p in L.get("panels", []) for sec in p["sections"])
+        assert in_block or in_panel, album
+        others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
+        assert not any(album in " ".join(b["notes"]) for b in others)
+    assert not any(line.startswith("ALBUMS") for p in L.get("panels", []) for sec in p["sections"] for line in sec["lines"])
