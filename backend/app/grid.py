@@ -103,27 +103,35 @@ def _largest_rectangle(free, rows, c_lo, c_hi, min_width=1):
     return best
 
 
-def _recorded(band, lineup):
-    """ "Recorded Machine Head (1972), Who Do We Think We Are (1973)." for the
-    albums released while this line-up was together (a release year sits
-    mid-year, so it lands on the line-up running then)."""
-    from app.narrative import lineup_for
-    mine = [a for a in band.albums if a[:4].isdigit() and lineup_for(band.lineups, int(a[:4]) + 0.5) is lineup]
-    if not mine:
+def album_time(album):
+    """ "1972-03-25 Machine Head" -> 1972.23; a year alone sits mid-year."""
+    when = album.split(" ", 1)[0]
+    if not when[:4].isdigit():
         return None
-    return "Recorded " + ", ".join(f"{a.split(' ', 1)[1]} ({a[:4]})" for a in mine) + "."
+    year = int(when[:4])
+    if len(when) >= 7 and when[5:7].isdigit():
+        day = int(when[8:10]) if len(when) >= 10 and when[8:10].isdigit() else 15
+        return year + (int(when[5:7]) - 1) / 12 + (day - 1) / 365
+    return year + 0.5
 
 
-def _fit_albums(item, width, n_lines):
-    """As many albums as fit in n_lines (whole titles), then an ellipsis."""
-    head, albums = item.split(": ", 1)
-    parts = albums.split(" · ")
-    for k in range(len(parts), 0, -1):
-        text = f"{head}: " + " · ".join(parts[:k]) + ("" if k == len(parts) else " …")
-        lines = wrap(text, HAND, NOTE_SIZE, width)
-        if len(lines) <= n_lines:
-            return lines
-    return []
+def _albums_of(band, lineup):
+    """The albums released while this line-up was together: each album is a
+    dated note on its band, told on the line-up that made it (the user's
+    instruction: in the band's history, never a list apart)."""
+    from app.narrative import lineup_for
+    return [a for a in band.albums if album_time(a) is not None and lineup_for(band.lineups, album_time(a)) is lineup]
+
+
+def _recorded(albums, shown=None):
+    """ "Recorded Machine Head (1972), Who Do We Think We Are (1973)." -
+    the first `shown` of them, and how many more, when the block is short of room."""
+    if not albums:
+        return None
+    shown = len(albums) if shown is None else max(1, shown)
+    text = ", ".join(f"{a.split(' ', 1)[1]} ({a[:4]})" for a in albums[:shown])
+    more = len(albums) - shown
+    return f"Recorded {text}{f' and {more} more' if more > 0 else ''}."
 
 
 def coverage(layout):
@@ -273,13 +281,22 @@ class GridLayout(Cartographer):
                                  f"{f' and {len(band.undated) - BRIEF_NAMES} others' if len(band.undated) > BRIEF_NAMES else ''}."]
             # the notes written from Wikipedia (what the lines can't show) come first
             told_here = [s["text"].rstrip(".") + "." for s in band.stories if lineup_for(band.lineups, s["year"]) is lu]
-            recorded = _recorded(band, lu)  # this line-up's albums, as Frame listed them in the block
-            notes = " ".join((told_here + ([recorded] if recorded else []) + said + extra)[:MAX_NOTES])
-            # the block widens for its story, not its album list (which a panel can carry)
-            story = " ".join((told_here + said + extra)[:MAX_NOTES])
+            albums = _albums_of(band, lu)  # this line-up's albums, told in its block as Frame did
+
+            def compose(k):
+                return " ".join((told_here + ([_recorded(albums, k)] if albums else []) + said + extra)[:MAX_NOTES])
+
+            def too_long(text, n):
+                return len(wrap(text, HAND, NOTE_SIZE, n * slot - 8)) > NOTE_LINES
+
             widest = span + NOTE_WIDEN
-            while span < widest and len(wrap(story, HAND, NOTE_SIZE, span * slot - 8)) > NOTE_LINES:
+            while span < widest and too_long(compose(None), span):  # widen for the story and the albums
                 span += 1
+            shown = len(albums)
+            while shown > 1 and too_long(compose(shown), span):  # still short of room: "... and 3 more"
+                shown -= 1
+            recorded = _recorded(albums, shown)
+            notes = compose(shown)
             box = {"id": f"{band.id}#{lu.number}", "band_id": band.id, "band_name": band.name, "number": lu.number,
                    "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
@@ -575,7 +592,8 @@ class GridLayout(Cartographer):
         the page blank), the gaps between line-ups taken by discographies and
         more of the story. Find the empty rectangles no line-up or line passes
         through, largest first, and give each to the nearest band with
-        material left: the notes its blocks had no room for, then its albums."""
+        material left: the notes its blocks had no room for, where its
+        musicians went, its style. (Albums stay with their line-ups.)"""
         unit = self.unit
         step = unit * self.hs
         c_lo = -int((x0 - MARGIN) // step)
@@ -631,9 +649,6 @@ class GridLayout(Cartographer):
                 for item in material[band_id]:
                     wrapped = wrap(item, HAND, NOTE_SIZE, pw)
                     if len(lines) + len(wrapped) > capacity:
-                        if item.startswith("ALBUMS: ") and capacity - len(lines) >= 1:
-                            lines += _fit_albums(item, pw, capacity - len(lines))
-                            used += 1
                         break
                     lines += wrapped
                     used += 1
@@ -651,7 +666,8 @@ class GridLayout(Cartographer):
     def _panel_material(self, boxes):
         """What each band has to say beyond its blocks, most telling first:
         the notes its blocks had no room for, where its longest-serving
-        musicians went (or came from) off this poster, its albums, its style."""
+        musicians went (or came from) off this poster, its style. Its albums
+        are notes on the line-ups that made them, never a list in a panel."""
         shown = {}
         for b in boxes:
             shown.setdefault(b["band_id"], []).append(" ".join(b["notes"]))
@@ -672,10 +688,6 @@ class GridLayout(Cartographer):
                     more = len(elsewhere) - len(shown_names)
                     items.append(f"{person.name} also played with {', '.join(shown_names)}"
                                  f"{f' and {more} more' if more > 0 else ''}.")
-            # a line-up's albums its block had no room for, still said with the line-up that made them
-            for b in sorted((b for b in boxes if b["band_id"] == band.id), key=lambda b: b["start"]):
-                if b.get("recorded") and b["recorded"] not in " ".join(b["notes"]):  # cut short: say it in full
-                    items.append(f"{b['dates'][0].title()} to {b['dates'][1].lower()}: {b['recorded'][0].lower()}{b['recorded'][1:]}")
             if band.genres:
                 items.append(f"Style: {', '.join(band.genres)}.")
             if items:

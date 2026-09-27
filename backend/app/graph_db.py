@@ -123,15 +123,26 @@ class Neo4jStore:
             f"MERGE (n:{label} {{mbid: $mbid}}) "
             "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
             "n.begin = $begin, n.end = $end, n.ended = $ended, n.genres = $genres, n.wikidata = $wikidata, "
-            "n.albums = $albums, n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, "
+            "n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, "
             "n.fetched_at = datetime()",
             mbid=record["mbid"], name=record["name"], type=record.get("type"),
             disambiguation=record.get("disambiguation"), begin=record.get("begin"),
             end=record.get("end"), ended=record.get("ended", False), genres=record.get("genres") or [],
-            wikidata=record.get("wikidata"), albums=record.get("albums"), sitelinks=record.get("sitelinks"),
+            wikidata=record.get("wikidata"), sitelinks=record.get("sitelinks"),
             chart=None if record.get("chart") is None else json.dumps(record["chart"]),
             chart_source=record.get("chart_source"),
         )
+        if record.get("albums") is not None and label == "Band":
+            # each album a node on the band, dated: a note in the band's history
+            # (placed on the line-up together when it came out), not a list
+            tx.run("MATCH (n:Band {mbid: $mbid}) SET n.albums_checked = true REMOVE n.albums "
+                   "WITH n OPTIONAL MATCH (n)-[r:RELEASED]->(:Album) DELETE r", mbid=record["mbid"])
+            for album in record["albums"]:
+                when, _, title = album.partition(" ")
+                tx.run("MATCH (n:Band {mbid: $mbid}) "
+                       "MERGE (a:Album {key: $key}) SET a.title = $title, a.date = $date "
+                       "MERGE (n)-[:RELEASED]->(a)",
+                       mbid=record["mbid"], key=f"{record['mbid']}|{title}", title=title, date=when)
         for m in record.get("memberships", []):
             tx.run(
                 "MERGE (a:Artist {mbid: $pid}) ON CREATE SET a.name = $pname "
@@ -163,13 +174,18 @@ class Neo4jStore:
         if not row:
             return None
         n = row["n"]
+        albums = None  # not looked up yet (or only as the old undated list: look again)
+        if n.get("albums_checked"):
+            albums = sorted(f"{r['date']} {r['title']}" for r in tx.run(
+                "MATCH (:Band {mbid: $mbid})-[:RELEASED]->(a:Album) RETURN a.date AS date, a.title AS title",
+                mbid=mbid))
         return {
             "mbid": n["mbid"], "name": n.get("name"), "type": n.get("type"),
             "disambiguation": n.get("disambiguation") or "",
             "begin": n.get("begin"), "end": n.get("end"), "ended": bool(n.get("ended")),
             "genres": list(n.get("genres") or []),
             "wikidata": n.get("wikidata"),  # None: cached before Wikidata links were kept
-            "albums": None if n.get("albums") is None else list(n.get("albums")),  # None: not looked up yet
+            "albums": albums,
             "sitelinks": n.get("sitelinks"),  # Wikipedias with an article on the band; None: not looked up
             "chart": None if n.get("chart") is None else json.loads(n["chart"]),  # Wikipedia's member chart; [] none
             "chart_source": n.get("chart_source"),

@@ -321,19 +321,33 @@ def test_notes_from_wikipedia_land_on_their_line_up_first():
 def test_albums_go_with_the_line_up_that_made_them():
     harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=2)
     from app.fitting import fit_tree
+    from app.grid import album_time
     from app.narrative import lineup_for
-    albums = {"demo:yardbirds": ["1966 Roger the Engineer", "1967 Little Games"]}
+    albums = {"demo:yardbirds": ["1966-07-15 Roger the Engineer", "1967-07-24 Little Games"]}
     tree, L, fit = fit_tree(harvest, paper="A1", albums=albums)
     yb = tree.bands["demo:yardbirds"]
-    for album, year in (("Roger the Engineer", 1966), ("Little Games", 1967)):
-        target = lineup_for(yb.lineups, year + 0.5)
+    panels = " ".join(line for p in L.get("panels", []) for sec in p["sections"] for line in sec["lines"])
+    for album in albums["demo:yardbirds"]:
+        title = album.split(" ", 1)[1]
+        target = lineup_for(yb.lineups, album_time(album))
         box = next(b for b in L["boxes"] if b["id"] == f"demo:yardbirds#{target.number}")
-        in_block = album in " ".join(box["notes"])
-        in_panel = any(album in " ".join(sec["lines"]) for p in L.get("panels", []) for sec in p["sections"])
-        assert in_block or in_panel, album
+        assert title in " ".join(box["notes"]), title  # in the block of the line-up that made it
         others = [b for b in L["boxes"] if b["band_id"] == "demo:yardbirds" and b is not box]
-        assert not any(album in " ".join(b["notes"]) for b in others)
-    assert not any(line.startswith("ALBUMS") for p in L.get("panels", []) for sec in p["sections"] for line in sec["lines"])
+        assert not any(title in " ".join(b["notes"]) for b in others)
+        assert title not in panels  # never a list apart
+
+
+def test_the_release_date_decides_the_line_up():
+    from app.grid import album_time
+    assert abs(album_time("1972-03-25 Machine Head") - 1972.23) < 0.01
+    assert album_time("1966 Roger the Engineer") == 1966.5
+
+
+def test_a_block_short_of_room_says_how_many_more_albums():
+    from app.grid import _recorded
+    many = [f"19{70 + i}-01-01 Album {i}" for i in range(6)]
+    assert _recorded(many, 2) == "Recorded Album 0 (1970), Album 1 (1971) and 4 more."
+    assert _recorded(many).count("(") == 6
 
 
 def _overlaps(L):

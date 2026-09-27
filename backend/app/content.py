@@ -28,7 +28,7 @@ class Content:
     harvest: dict
     trees: dict                      # line-up cap -> FamilyTree (every candidate band)
     stories: dict = field(default_factory=dict)   # band id -> notes (from Wikipedia, and by hand)
-    albums: dict = field(default_factory=dict)    # band id -> ["1972 Machine Head", ...]
+    albums: dict = field(default_factory=dict)    # band id -> ["1972-03-25 Machine Head", ...]
     links: list = field(default_factory=list)     # musicians' moves between line-ups
     lettering: str = "classic"
 
@@ -217,9 +217,9 @@ def gather_stories(harvester, harvest, opts, progress):
 
 
 def gather_albums(harvester, harvest, opts, progress):
-    """Studio albums for the ranked bands ({band id: ["1972 Machine Head", ...]}),
-    which fill the gaps on the poster as Frame's discographies did. Looked up
-    once per band and kept on its record (Neo4j)."""
+    """Studio albums for the ranked bands ({band id: ["1972-03-25 Machine Head", ...]}),
+    each told on the line-up together when it came out. Looked up once per
+    band and kept as Album nodes on the band (Neo4j)."""
     out = {}
     for band in Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values():
         record = harvest["records"].get(band.id) or {}

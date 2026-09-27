@@ -133,7 +133,7 @@ class Band(BaseModel):
     lineups: List[Lineup] = []
     undated: List[str] = []  # members MusicBrainz gives no dates for, left out of the line-ups
     stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
-    albums: List[str] = []  # studio albums, "1972 Machine Head" (MusicBrainz)
+    albums: List[str] = []  # studio albums, "1972-03-25 Machine Head" (MusicBrainz), notes on their line-ups
     genres: List[str] = []
     standing: Optional[int] = None  # Wikipedias with an article on the band (Wikidata sitelinks)
 
