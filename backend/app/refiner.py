@@ -144,6 +144,7 @@ class Person(BaseModel):
     died: Optional[float] = None
     died_label: Optional[str] = None
     bands: List[str] = []  # every band they played in, as MusicBrainz knows it (earliest first)
+    joined: Dict[str, float] = {}  # band name -> the year they first joined it (their career, dated)
 
 
 class FamilyTree(BaseModel):
@@ -202,6 +203,7 @@ class Refiner:
                 career[m["person_id"]][m["band_name"]] = min(year, career[m["person_id"]].get(m["band_name"], 9999))
         for pid, person in people.items():
             person.bands = [n for n, _ in sorted(career.get(pid, {}).items(), key=lambda kv: (kv[1], kv[0])) if n]
+            person.joined = {n: y for n, y in career.get(pid, {}).items() if n and y < 9999}
 
         selected = self._select(bands, harvest.get("root_bands", []))
         root_name = harvest.get("root_name", "")

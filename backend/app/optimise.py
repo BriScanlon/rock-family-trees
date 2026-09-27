@@ -158,8 +158,7 @@ def _score(layout, tree, p, worth, full):
     content = sum(worth[k] for k in tree.bands) / sum(worth.values())
     detail = (sum(len(b.lineups) for b in tree.bands.values())
               / max(1, sum(len(full.bands[k].lineups) for k in tree.bands)))
-    said = " ".join(" ".join(b["notes"]) for b in layout["boxes"]) + " " + " ".join(
-        line for panel in layout.get("panels", []) for sec in panel["sections"] for line in sec["lines"])
+    said = " ".join(" ".join(b["notes"]) for b in layout["boxes"])
     notes = [s["text"].rstrip(".")[:30] for b in tree.bands.values() for s in b.stories]
     notes_shown = sum(1 for n in notes if n in said) / len(notes) if notes else 1.0
     chron = _chronology_error(layout)

@@ -26,12 +26,7 @@ from app.narrative import lineup_for
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
-PANEL_MIN_UNITS = 6     # narrowest text panel: three members' width
-PANEL_PAD = 14          # margin inside a gap before a panel's text
-PANEL_HEAD = 30         # a panel section's band-name heading
-PANEL_GAP = 12          # space between two bands' sections in a panel
-PANEL_CAREERS = 3       # longest-serving members whose other bands a panel lists
-PANEL_ROW_WEIGHT = 4    # a row is ~4 half-member columns tall: weigh rows by that when comparing areas
+CAREERS = 3             # a band's longest-serving members whose other bands (off this poster) are told
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
@@ -81,28 +76,6 @@ def _slack(*labels):
     return 1.0 if any(l and l.strip().isdigit() for l in labels) else MONTH
 
 
-def _largest_rectangle(free, rows, c_lo, c_hi, min_width=1):
-    """The largest block of free cells at least min_width wide: ((first row,
-    first col), (last row, col after last)), or None. Histogram method."""
-    heights = {c: 0 for c in range(c_lo, c_hi)}
-    best, best_area = None, 0
-    for t in rows:
-        for c in range(c_lo, c_hi):
-            heights[c] = heights[c] + 1 if (t, c) in free else 0
-        stack = []  # (start column, height)
-        for c in list(range(c_lo, c_hi)) + [c_hi]:
-            h = heights.get(c, 0) if c < c_hi else 0
-            start = c
-            while stack and stack[-1][1] >= h:
-                s, sh = stack.pop()
-                area = sh * PANEL_ROW_WEIGHT * (c - s)
-                if sh > 0 and c - s >= min_width and area > best_area:
-                    best_area, best = area, ((t - sh + 1, s), (t, c))
-                start = s
-            stack.append((start, h))
-    return best
-
-
 def album_time(album):
     """ "1972-03-25 Machine Head" -> 1972.23; a year alone sits mid-year."""
     when = album.split(" ", 1)[0]
@@ -136,11 +109,9 @@ def _recorded(albums, shown=None):
 
 def coverage(layout):
     """Share of the drawing area (inside the margins, below the title, above the
-    key) covered by line-ups and by the text in the panels: how full the page is."""
+    key) covered by line-ups: how full the page is."""
     area = (layout["width"] - 2 * MARGIN) * (layout["footer_y"] - 30 - TITLE_H)
     ink = sum(b["w"] * b["h"] for b in layout["boxes"])
-    ink += sum(p["w"] * sum(PANEL_HEAD + len(sec["lines"]) * NOTE_LINE + PANEL_GAP for sec in p["sections"])
-               for p in layout.get("panels", []))
     return ink / area if area > 0 else 0.0
 
 
@@ -242,6 +213,7 @@ class GridLayout(Cartographer):
         if not bands:
             raise ValueError("Nothing to draw: no band line-ups with usable dates were found")
         self.appearances = self._appearances(bands)
+        self.info = self._info_notes()
         self.boxes, self.box_order = {}, []
         units = []
         for band in bands:
@@ -281,10 +253,12 @@ class GridLayout(Cartographer):
                                  f"{f' and {len(band.undated) - BRIEF_NAMES} others' if len(band.undated) > BRIEF_NAMES else ''}."]
             # the notes written from Wikipedia (what the lines can't show) come first
             told_here = [s["text"].rstrip(".") + "." for s in band.stories if lineup_for(band.lineups, s["year"]) is lu]
+            # what's known of the band and its musicians beyond this poster, at its time
+            info = [n["text"] for n in self.info.get(band.id, []) if lineup_for(band.lineups, n["year"]) is lu]
             albums = _albums_of(band, lu)  # this line-up's albums, told in its block as Frame did
 
             def compose(k):
-                return " ".join((told_here + ([_recorded(albums, k)] if albums else []) + said + extra)[:MAX_NOTES])
+                return " ".join((told_here + ([_recorded(albums, k)] if albums else []) + said + info + extra)[:MAX_NOTES])
 
             def too_long(text, n):
                 return len(wrap(text, HAND, NOTE_SIZE, n * slot - 8)) > NOTE_LINES
@@ -553,8 +527,6 @@ class GridLayout(Cartographer):
             boxes.append(b)
 
         trunks, edges = self._route(placed, x0, row_y)
-        panels = self._panels(boxes, trunks, edges, x0, row_y, width, height,
-                              self.max_rows or used_rows)
         years = []
         for t in range(used_rows):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
@@ -568,7 +540,7 @@ class GridLayout(Cartographer):
             "years": years,
             "boxes": [{k: v for k, v in b.items() if k not in ("lineup", "cols")} | {"cols": dict(b["cols"])}
                       for b in boxes],
-            "trunks": trunks, "edges": edges, "panels": panels,
+            "trunks": trunks, "edges": edges,
             "footer_y": height - FOOTER_H + 30,
             "grid": {"cols": self.max_cols or used_cols, "rows": self.max_rows or used_rows,
                      "used_cols": used_cols, "used_rows": used_rows, "unit": unit, "row_h": pitch},
@@ -587,112 +559,61 @@ class GridLayout(Cartographer):
         return W, H
 
     # ------------------------------------------------------------------
-    def _panels(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
-        """Fill the gaps as Frame did: his trees are all but solid ink (2-3% of
-        the page blank), the gaps between line-ups taken by discographies and
-        more of the story. Find the empty rectangles no line-up or line passes
-        through, largest first, and give each to the nearest band with
-        material left: the notes its blocks had no room for, where its
-        musicians went, its style. (Albums stay with their line-ups.)"""
-        unit = self.unit
-        step = unit * self.hs
-        c_lo = -int((x0 - MARGIN) // step)
-        c_hi = int((width - MARGIN - x0) // step)
-        bottom = height - FOOTER_H
-        rows = [t for t in range(n_rows) if row_y(t + 1) <= bottom + 1]
-        cell_box = lambda t, c: (self._col_x(c), row_y(t), self._col_x(c + 1), row_y(t + 1))
-        busy = set()
-        for b in boxes:
-            for t in [b["row"]]:
-                for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
-                    busy.add((t, c))
-        for (t, c), what in self._cells.items():
-            busy.add((t, c))
-        for line in list(trunks) + list(edges):
-            pts = line["points"]
-            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
-                lx, hx, ly, hy = min(ax, bx) - 6, max(ax, bx) + 6, min(ay, by) - 6, max(ay, by) + 6
-                for t in rows:
-                    for c in range(c_lo, c_hi):
-                        cx0, cy0, cx1, cy1 = cell_box(t, c)
-                        if lx < cx1 and cx0 < hx and ly < cy1 and cy0 < hy:
-                            busy.add((t, c))
-        free = {(t, c) for t in rows for c in range(c_lo, c_hi) if (t, c) not in busy}
+    def _info_notes(self):
+        """Info notes, each attached to the band and the time it belongs to
+        (the user's instruction: part of the layout, never a list apart):
+        {band id: [{"text", "year"}]}.
 
-        material = self._panel_material(boxes)
-        where = {}
-        for b in boxes:
-            where.setdefault(b["band_id"], []).append((b["x"] + b["w"] / 2, b["y"] + b["h"] / 2))
-        near = lambda band_id, centre: min(((centre[0] - x) ** 2 + (centre[1] - y) ** 2
-                                            for x, y in where.get(band_id, [(1e9, 1e9)])))
-
-        panels = []
-        while material:
-            rect = _largest_rectangle(free, rows, c_lo, c_hi, PANEL_MIN_UNITS)
-            if rect is None:
-                break
-            (t0, c0), (t1, c1) = rect  # inclusive rows, exclusive columns
-            for t in range(t0, t1 + 1):
-                for c in range(c0, c1):
-                    free.discard((t, c))
-            px0, py0 = self._col_x(c0) + PANEL_PAD, row_y(t0) + PANEL_PAD
-            pw = self._col_x(c1) - self._col_x(c0) - 2 * PANEL_PAD
-            ph = row_y(t1 + 1) - row_y(t0) - 2 * PANEL_PAD
-            centre = (px0 + pw / 2, py0 + ph / 2)
-            # sections from the nearest bands in turn, until the panel is full
-            sections, room = [], ph
-            for band_id in sorted(material, key=lambda k: near(k, centre)):
-                capacity = int((room - PANEL_HEAD) // NOTE_LINE)
-                if capacity < 1:
-                    break
-                lines, used = [], 0
-                for item in material[band_id]:
-                    wrapped = wrap(item, HAND, NOTE_SIZE, pw)
-                    if len(lines) + len(wrapped) > capacity:
-                        break
-                    lines += wrapped
-                    used += 1
-                if not lines:
-                    continue
-                sections.append({"title": self.tree.bands[band_id].name.upper(), "lines": lines})
-                room -= PANEL_HEAD + len(lines) * NOTE_LINE + PANEL_GAP
-                material[band_id] = material[band_id][used:]
-            for k in [k for k, v in material.items() if not v]:
-                del material[k]
-            if sections:
-                panels.append({"x": px0, "y": py0, "w": pw, "h": ph, "sections": sections})
-        return panels
-
-    def _panel_material(self, boxes):
-        """What each band has to say beyond its blocks, most telling first:
-        the notes its blocks had no room for, where its longest-serving
-        musicians went (or came from) off this poster, its style. Its albums
-        are notes on the line-ups that made them, never a list in a panel."""
-        shown = {}
-        for b in boxes:
-            shown.setdefault(b["band_id"], []).append(" ".join(b["notes"]))
-        on_poster = {b.name for b in self.tree.bands.values()}
-        material = {}
+        - A band's style, on its first line-up.
+        - Where its longest-serving musicians played off this poster, each
+          other band told once, on the poster band they were in at the time:
+          "also with" one they joined while a member, "went on to" one they
+          joined after leaving (on their last line-up), "previously with" one
+          from before (on their first). A move to a band on the poster is a
+          line, and needs no words."""
+        from app.narrative import lineup_for
+        info = {}
         for band in self.tree.bands.values():
-            told = " ".join(shown.get(band.id, []))
-            items = [s["text"].rstrip(".") + "." for s in band.stories
-                     if s["text"].rstrip(".")[:40] not in told]
+            if band.genres:
+                info.setdefault(band.id, []).append({"text": f"Style: {', '.join(band.genres)}.", "year": band.start})
+        on_poster = {b.name for b in self.tree.bands.values()}
+        people = set()
+        for band in self.tree.bands.values():
             tenure = {}
             for st in band.stints:
                 tenure[st.person_id] = tenure.get(st.person_id, 0) + st.end - st.start
-            for pid in sorted(tenure, key=lambda p: -tenure[p])[:PANEL_CAREERS]:
-                person = self.tree.people.get(pid)
-                elsewhere = [n for n in (person.bands if person else []) if n != band.name and n not in on_poster]
-                if len(elsewhere) >= 2:
-                    shown_names = elsewhere[:BRIEF_NAMES + 2]
-                    more = len(elsewhere) - len(shown_names)
-                    items.append(f"{person.name} also played with {', '.join(shown_names)}"
-                                 f"{f' and {more} more' if more > 0 else ''}.")
-            if band.genres:
-                items.append(f"Style: {', '.join(band.genres)}.")
-            if items:
-                material[band.id] = items
-        return material
+            people |= set(sorted(tenure, key=lambda p: -tenure[p])[:CAREERS])
+        told = {}  # (band id, year, person, kind) -> [other band names]
+        for pid in people:
+            person = self.tree.people.get(pid)
+            if person is None:
+                continue
+            stints = sorted(((st.start, st.end, band) for band in self.tree.bands.values()
+                             for st in band.stints if st.person_id == pid), key=lambda s: (s[0], s[1], s[2].name))
+            if not stints:
+                continue
+            for other, year in sorted(person.joined.items(), key=lambda kv: kv[1]):
+                if other in on_poster:
+                    continue
+                during = [s for s in stints if s[0] <= year < s[1]]
+                before = [s for s in stints if s[1] <= year]
+                if during:
+                    s, kind, at = during[-1], "also with", year
+                elif before:
+                    s, kind, at = before[-1], "went on to", before[-1][1] - 0.01
+                else:
+                    s, kind, at = stints[0], "previously with", stints[0][0]
+                # one sentence per musician per line-up: "Dave LaRue also with Steve
+                # Morse Trio (2003), Flying Colors (2011)", dated by the first
+                lu = lineup_for(s[2].lineups, at)
+                key = (s[2].id, lu.number if lu else 0, person.name, kind)
+                told.setdefault(key, [at, []])[1].append(f"{other} ({int(year)})")
+        for (band_id, _, name, kind), (at, others) in told.items():
+            shown = others[:BRIEF_NAMES]
+            more = len(others) - len(shown)
+            info.setdefault(band_id, []).append(
+                {"text": f"{name} {kind} {', '.join(shown)}{f' and {more} more' if more > 0 else ''}.", "year": at})
+        return info
 
     # ------------------------------------------------------------------
     def _route(self, placed, x0, row_y):
