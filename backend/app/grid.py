@@ -32,7 +32,7 @@ EVENT_PAD = 10          # margin inside an event block's cells
 NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
 MAX_WIDEN = 1.8         # a block may stretch to this many times its width into free columns beside it
 FLOAT_SCALE = 1.4       # floating notes print larger than a block's: Frame lettered his asides big
-TIME_COLUMNS = True     # time runs down every column (False: only within each band and along each move)
+TIME_COLUMNS = False    # time runs down each band and along each move; not every column (the user's choice: a fuller page)
 DRIFT = 4               # half-member columns a line-up may shift from the one before it (Frame's jogs)
 DRIFT_WEIGHT = 0.15     # cost per column of shift: straight lines unless drifting packs better
 SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
@@ -387,6 +387,7 @@ class GridLayout(Cartographer):
     def _pack_once(self, n_cols, n_rows, floors):
         units = self._units_cache
         occ = defaultdict(list)  # column -> [(first sub-row, end, earliest start, latest start)] of what's there
+        band_end = {}            # band id -> the sub-row below its last line-up so far: a re-formed band goes below
         cell = {}
         tier, col0 = {}, {}
         placed = []
@@ -403,7 +404,7 @@ class GridLayout(Cartographer):
             for b in u["boxes"]:
                 # (moves into line-ups already placed can't be honoured here: _pack repairs them)
                 lims.append(max([tier[a["id"]] + SUB for a in into[b["id"]] if a["id"] in tier]
-                                + [floors.get(b["id"], 0)]))
+                                + [floors.get(b["id"], 0), band_end.get(u["band"].id, 0)]))
             era_rows = [self._era_row(eras, b["start"]) for b in u["boxes"]]
             links = [(c, self.linked.get((u["band"].id, bid), 0)) for bid, cs in cols_of.items()
                      for c in cs if bid != u["band"].id and self.linked.get((u["band"].id, bid))]
@@ -482,6 +483,7 @@ class GridLayout(Cartographer):
                 tier[b["id"]], col0[b["id"]] = r, cb
                 eras.append((b["start"], r))
                 placed.append(b)
+                band_end[u["band"].id] = max(band_end.get(u["band"].id, 0), r + SUB)
             cols_of[u["band"].id].append(c0)
         self._cells = cell
         self._tier, self._col0 = tier, col0

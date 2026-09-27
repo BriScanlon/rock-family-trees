@@ -1,3 +1,4 @@
+import re
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -25,13 +26,8 @@ def test_boxes_in_a_lane_never_overlap(layout):
             assert a["y"] + a["footprint"] <= b["y"], (a["id"], b["id"])
 
 
-def test_time_flows_down_each_lane_and_every_move_goes_down(layout):
-    lanes = {}
-    for b in layout["boxes"]:
-        lanes.setdefault(b["lane"], []).append(b)
-    for boxes in lanes.values():
-        boxes.sort(key=lambda b: b["start"])
-        assert [b["y"] for b in boxes] == sorted(b["y"] for b in boxes)
+def test_every_move_goes_down_the_page(layout):
+    # (time down each band: test_time_runs_down_every_band; the user dropped time down every column)
     by_id = {b["id"]: b for b in layout["boxes"]}
     for e in layout["edges"]:
         a, b = by_id[e["from"]], by_id[e["to"]]
@@ -168,13 +164,16 @@ def test_notes_sit_under_the_band_name(layout):
         assert b["y"] < b["notes_y"] < b["bar_y"] and len(b["notes"]) <= NOTE_LINES
 
 
-def test_time_runs_down_every_column(layout):
-    boxes = layout["boxes"]
-    for a in boxes:
-        for b in boxes:
-            overlap = a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"]
-            if overlap and a["y"] < b["y"]:
-                assert a["start"] <= b["start"], (a["id"], b["id"])
+def test_time_runs_down_every_band(layout):
+    # the user chose a fuller page over time down every column: each band's
+    # line-ups still run down in order (and every move goes down, below)
+    by_band = {}
+    for b in layout["boxes"]:
+        by_band.setdefault(b["band_id"], []).append(b)
+    for boxes in by_band.values():
+        boxes.sort(key=lambda b: b["start"])
+        for a, b in zip(boxes, boxes[1:]):
+            assert a["y"] + a["h"] <= b["y"], (a["id"], b["id"])
 
 
 def test_every_move_goes_down(layout):
@@ -406,8 +405,9 @@ def test_info_notes_attach_to_the_band_and_time_they_belong_to():
             if n["text"].startswith("Style:"):
                 assert lineup_for(band.lineups, n["year"]) is band.lineups[0]
                 continue
-            for other in on_poster:
-                assert f" {other} (" not in n["text"]  # a move on the poster is a line, not words
+            named = re.findall(r"(?:with|to) (.+)\.$", n["text"])
+            for name in re.split(r", | and ", named[0]) if named else []:
+                assert re.sub(r" \(\d{4}\)$", "", name) not in on_poster  # a move on the poster is a line, not words
             assert n["text"] not in seen  # each told once
             seen.add(n["text"])
             who = next(p for p in tree.people.values() if n["text"].startswith(p.name + " "))

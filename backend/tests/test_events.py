@@ -129,11 +129,11 @@ def test_works_come_from_wikidata_most_written_about_first():
     ]
 
 
-def _layout_with_events(evs, paper="A1"):
+def _layout_with_events(evs, paper="A1", max_bands=6):
     from app.fitting import fit_tree
     from app.pipeline import harvester_for
     harvest = harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=4)
-    tree, _, _ = fit_tree(harvest, paper=paper, max_bands=24)
+    tree, _, _ = fit_tree(harvest, paper=paper, max_bands=max_bands)  # a small family: room to spare
     tree.bands["demo:yardbirds"].events = evs
     from app.grid import GridLayout
     from app.cartographer import STYLES
