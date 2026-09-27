@@ -57,11 +57,37 @@ Line-up blocks now use 55–82% of the grid on A3/A2/A1, against 14–23% of the
 
 Also fixed: the MusicBrainz rate limiter uses a monotonic clock, because Docker Desktop's VM clock drifted an hour and stepped backwards, and a job slept for the size of the step. And job status writes retry on Windows, where replacing a file another thread is reading fails with `WinError 5`.
 
-**Next:**
-- #6: band significance (Wikidata sitelinks), so Nirvana ranks above No Use for a Name; calibration families.
-- Fill the empty cells with discographies and anecdotes, as Frame did.
-- Tighter line routing.
-- Correct Grohl's Foo Fighters membership on MusicBrainz, which needs the user's account.
+## Data quality, notes from Wikipedia, and filling the page (2026-09-27, later)
+
+**Data fixes found on real posters** (Deep Purple A1):
+- An undated MusicBrainz membership was stretched over the band's whole life. David Stone (Rainbow keyboards, 1977–78) appeared in every Rainbow line-up and hid the 1984–93 break. Undated members are now left out, and noted as "dates unknown", when at least half the band is dated. Founders and eponymous members keep the full span.
+- A band only counts as "still going" if a dated membership is still open.
+- Missing instruments are borrowed from the musician's other memberships.
+- Renamings are noted ("Renamed The Maze").
+- The instrument shown is the principal one (Gillan: vocals, not harmonica).
+
+**Notes from Wikipedia** (issues #5, #7; `app/wikipedia.py`, `app/narrative.py`):
+- MusicBrainz url-rels give the Wikidata item, which gives the article; the lead plus History section goes to a model with the band's line-ups.
+- It returns short dated notes, each with its source passage. Code checks the source is in the article, the note doesn't share 6 ordinary words with it (names and titles excepted), and a second pass confirms the source supports every claim.
+- **Model:** local Qwen3 14B through Ollama by default (`rftg-qwen3` in `ollama/Modelfile`: 40,960-token context, 15.7 GB, all in the RX 7900 XT's memory). On Windows Ollama runs natively, because Docker Desktop can't give a container an AMD GPU. Requests queue one at a time (a lock file on the shared data volume, plus `OLLAMA_NUM_PARALLEL=1`). Claude is the alternative (`NARRATIVE_BACKEND=anthropic`).
+- **Stored in Neo4j:** `(:Band)-[:HAS_NOTES]->(:NoteSet)-[:INCLUDES]->(:Note)`, dropped notes included with the reason. Keyed on prompt fingerprint, model, article revision and line-ups, so improving the prompt writes afresh while older writings stay. If Wikipedia or the model is unreachable, the latest stored notes are used.
+- Example: Mark II reads "Montreux fire inspires 'Smoke on the Water'; album recorded in hotel corridor".
+
+**Filling the page.** Measured as the share of the drawing area with no ink (tiles about 1/48 of the width). Frame's Faces and Uriah Heep trees score 2–3%.
+
+| Deep Purple A1 | Empty |
+|---|---|
+| Grid layout, notes for 8 bands | 58% |
+| + text panels (albums only) | 54% |
+| + 40 candidate bands, panels filled from several bands | 37–42% |
+| + albums placed with the line-up that recorded them, columns spread to the sheet's edges | 39% |
+
+The remaining gap is structural. The greedy placement can't revisit a choice, and the panels run out of material.
+
+**Next** (agreed with the user):
+1. **Content first:** build every candidate band's line-ups, notes, albums and links, stored in Neo4j, before any placement.
+2. **Then a placement optimiser** scoring coverage, content and chronology (issue #8).
+- Also: #6 band significance (Wikidata); Wikipedia member timelines (#7 stage 2) for Rainbow's missing 1990s line-ups; correct Grohl's Foo Fighters membership on MusicBrainz (needs the user's account).
 
 ## How the look was arrived at
 
