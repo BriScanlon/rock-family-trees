@@ -18,7 +18,11 @@ from app.musicbrainz import is_group
 from app.refiner import Refiner
 
 LINEUP_CAPS = (20, 12, 8, 5, 3)   # line-ups kept per band at each level of detail, fullest first
-NARRATIVE_BANDS = int(os.getenv("NARRATIVE_BANDS", "0"))  # bands given notes; 0 = every candidate
+# A new family's first poster waits only for its top bands' notes and events;
+# the rest of the family is read afterwards, in the background (enrich), and
+# every poster after uses whatever is stored. (The user's Oasis poster waited
+# hours reading all 40 bands before anything was drawn.)
+NARRATIVE_BANDS = int(os.getenv("NARRATIVE_BANDS", "15"))  # bands whose notes a poster waits for
 
 
 @dataclass
@@ -52,9 +56,10 @@ class Content:
         }
 
 
-def build_content(artist_id, opts, progress=None, harvester=None):
+def build_content(artist_id, opts, progress=None, harvester=None, full=False):
     """Harvest, refine, write notes, look up albums, trace links - all of it,
-    before a single line-up is placed."""
+    before a single line-up is placed. `full`: write notes and events for
+    every candidate band (the background enrichment), not just the top ones."""
     from app.pipeline import harvester_for
     progress = progress or (lambda pct, msg: None)
     progress(5, "Checking the record collection")
@@ -65,9 +70,9 @@ def build_content(artist_id, opts, progress=None, harvester=None):
     )
     gather_standing(harvester, harvest, progress)  # before any ranking: it counts towards it
     gather_charts(harvester, harvest, progress)    # before any line-ups: it corrects them
-    stories = gather_stories(harvester, harvest, opts, progress) if opts["notes"] else {}
+    stories = gather_stories(harvester, harvest, opts, progress, full) if opts["notes"] else {}
     albums = gather_albums(harvester, harvest, opts, progress)
-    events = gather_events(harvester, harvest, opts, progress) if opts["notes"] else {}
+    events = gather_events(harvester, harvest, opts, progress, full) if opts["notes"] else {}
     trees = build_trees(harvest, opts["max_bands"], opts.get("title"), stories, albums, events)
     lettering = opts["lettering"]
     if lettering not in STYLES:  # "auto": follow the root band's genres
@@ -115,6 +120,14 @@ def links_for(tree):
                               "to_band": band.id, "to_lineup": lu.number, "year": round(lu.start, 2)})
             last[band.id], prev = (band, lu), (band, lu)
     return links
+
+
+def enrich(artist_id, opts, progress=None):
+    """Notes and events for the whole family, after its poster is drawn (a
+    background job): the next poster of the family is fuller, and none waits."""
+    from app import narrative
+    with narrative.background():
+        return build_content(artist_id, opts, progress, full=True).summary()
 
 
 def gather_standing(harvester, harvest, progress):
@@ -182,7 +195,7 @@ def gather_charts(harvester, harvest, progress):
         harvester.store.put(record)
 
 
-def gather_events(harvester, harvest, opts, progress):
+def gather_events(harvester, harvest, opts, progress, full=False):
     """Events from the top-ranked bands' most written-about albums and tours
     (app/events.py): {band id: [{"date", "year", "text", "significance",
     "subject"}]}. Each band's albums and tours are looked up once (Wikidata)
@@ -191,10 +204,16 @@ def gather_events(harvester, harvest, opts, progress):
         return {}
     from app import events as ev
     from app.wikipedia import WikipediaClient
-    ranked = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())[:ev.EVENT_BANDS]
+    ranked = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
+    albums = ev.EVENT_ALBUMS_FULL if full else ev.EVENT_ALBUMS
     wiki, out = WikipediaClient(), {}
     for i, band in enumerate(ranked):
         record = harvest["records"].get(band.id) or {}
+        stored = record.get("events")
+        # already read this deep: recalled, no model; beyond the poster's top bands: whatever is stored
+        if stored is not None and (record.get("events_depth") or 0) >= albums or (not full and i >= ev.EVENT_BANDS):
+            out[band.id] = list(stored or [])
+            continue
         try:
             works = record.get("works")
             if works is None or any("length" not in w for w in works):
@@ -203,8 +222,8 @@ def gather_events(harvester, harvest, opts, progress):
                 works = [dict(w, length=lengths.get(w["title"], 0)) for w in works]
                 record["works"] = works
                 harvester.store.put(record)
-            for work in ev.choose_works(works):
-                progress(73, f"Reading about {band.name}'s {work['title']} ({i + 1} of {len(ranked)})")
+            for work in ev.choose_works(works, albums=albums):
+                progress(73, f"Reading about {band.name}'s {work['title']} ({i + 1} of {min(len(ranked), ev.EVENT_BANDS) if not full else len(ranked)})")
                 article = wiki.article(work["title"])
                 if not article:
                     continue
@@ -215,12 +234,15 @@ def gather_events(harvester, harvest, opts, progress):
             ratings = ev.rank(band, out.get(band.id, []), store=harvester.store)
             out[band.id] = [dict(e, significance=ratings.get(e["text"], e.get("significance", 1)))
                             for e in out.get(band.id, [])]
+            # kept on the band's record: later posters recall them without the model
+            record["events"], record["events_depth"] = out[band.id], albums
+            harvester.store.put(record)
         except Exception as e:  # events are extra: the poster is drawn without them
             print(f"No events for {band.name}: {type(e).__name__}: {e}")
     return out
 
 
-def gather_stories(harvester, harvest, opts, progress):
+def gather_stories(harvester, harvest, opts, progress, full=False):
     """Notes from Wikipedia for the candidate bands: {band id: [notes]}.
     Written once per band, article revision and model, stored (Neo4j) and
     recalled after, so only a band's first poster waits for the model. If
@@ -230,9 +252,12 @@ def gather_stories(harvester, harvest, opts, progress):
         return {}
     from app import narrative
     from app.wikipedia import WikipediaClient
-    ranked = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
-    ranked = ranked[:NARRATIVE_BANDS] if NARRATIVE_BANDS else ranked
+    everyone = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())
+    ranked = everyone if full or not NARRATIVE_BANDS else everyone[:NARRATIVE_BANDS]
     wiki, out = WikipediaClient(), {}
+    for band in everyone[len(ranked):]:  # beyond the poster's top bands: their notes if stored, no model
+        recalled = harvester.store.latest_notes(band.id)
+        out[band.id] = narrative.final_notes(harvester.store, band.id, recalled["notes"] if recalled else [])
     for i, band in enumerate(ranked):
         progress(60 + int(12 * i / max(1, len(ranked))), f"Reading up on {band.name}")
         try:

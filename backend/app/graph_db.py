@@ -136,6 +136,7 @@ class Neo4jStore:
             "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
             "n.begin = $begin, n.end = $end, n.ended = $ended, n.genres = $genres, n.wikidata = $wikidata, "
             "n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, n.works = $works, "
+            "n.events = $events, n.events_depth = $events_depth, "
             "n.fetched_at = datetime()",
             mbid=record["mbid"], name=record["name"], type=record.get("type"),
             disambiguation=record.get("disambiguation"), begin=record.get("begin"),
@@ -144,6 +145,8 @@ class Neo4jStore:
             chart=None if record.get("chart") is None else json.dumps(record["chart"]),
             chart_source=record.get("chart_source"),
             works=None if record.get("works") is None else json.dumps(record["works"]),
+            events=None if record.get("events") is None else json.dumps(record["events"]),
+            events_depth=record.get("events_depth"),
         )
         if record.get("albums") is not None and label == "Band":
             # each album a node on the band, dated: a note in the band's history
@@ -203,6 +206,8 @@ class Neo4jStore:
             "chart": None if n.get("chart") is None else json.loads(n["chart"]),  # Wikipedia's member chart; [] none
             "chart_source": n.get("chart_source"),
             "works": None if n.get("works") is None else json.loads(n["works"]),  # its albums and tours (Wikidata)
+            "events": None if n.get("events") is None else json.loads(n["events"]),  # read from them, rated
+            "events_depth": n.get("events_depth"),
             "memberships": [
                 {"person_id": r["pid"], "person_name": r["pname"], "band_id": r["bid"],
                  "band_name": r["bname"], "begin": r["begin"], "end": r["end"],

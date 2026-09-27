@@ -24,6 +24,7 @@ import json
 import os
 import re
 import threading
+import time
 
 import requests
 
@@ -300,6 +301,40 @@ def verify(notes, client=None):
 
 
 _local_lock = threading.Lock()
+_background = threading.local()
+
+
+@contextlib.contextmanager
+def background():
+    """Requests made in here (the family's enrichment) wait while any poster
+    is being made: the poster someone is waiting for goes first."""
+    _background.on = True
+    try:
+        yield
+    finally:
+        _background.on = False
+
+
+@contextlib.contextmanager
+def foreground():
+    """A poster being made: background requests wait until it's done."""
+    os.makedirs(LOCK_DIR, exist_ok=True)
+    mark = os.path.join(LOCK_DIR, f"poster.{os.getpid()}.{threading.get_ident()}")
+    open(mark, "w").close()
+    try:
+        yield
+    finally:
+        try:
+            os.remove(mark)
+        except OSError:
+            pass
+
+
+def _poster_waiting():
+    try:
+        return any(n.startswith("poster.") for n in os.listdir(LOCK_DIR))
+    except OSError:
+        return False
 
 
 @contextlib.contextmanager
@@ -326,6 +361,8 @@ def one_at_a_time():
 def _ask_ollama(prompt, system=SYSTEM, schema=SCHEMA):
     """A local model through Ollama's chat API, held to the JSON schema,
     one request at a time."""
+    while getattr(_background, "on", False) and _poster_waiting():
+        time.sleep(5)  # a poster is being made: it goes first
     with one_at_a_time():
         resp = requests.post(f"{OLLAMA_URL}/api/chat", timeout=1800, json={
             "model": OLLAMA_MODEL, "stream": False, "format": schema,
