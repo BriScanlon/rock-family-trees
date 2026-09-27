@@ -30,6 +30,8 @@ CAREERS = 12            # a band's longest-serving members whose other bands (of
 EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
 EVENT_PAD = 10          # margin inside an event block's cells
 NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
+SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
+                        # its own pace (the user chose this over rows level across the page)
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
@@ -364,15 +366,17 @@ class GridLayout(Cartographer):
         upwards gives its target a lower minimum row and the page is placed
         again. None if it won't fit."""
         floors = {}
+        n_sub = None if n_rows is None else n_rows * SUB
         for _ in range(PACK_REPAIRS):
-            placed = self._pack_once(n_cols, n_rows, floors)
+            placed = self._pack_once(n_cols, n_sub, floors)
             if placed is None:
                 return None
-            upward = [(a, b) for _, a, b in self.moves if self._tier[b["id"]] <= self._tier[a["id"]]]
+            # a move goes down: the line-up it goes to starts below the bottom of the one it left
+            upward = [(a, b) for _, a, b in self.moves if self._tier[b["id"]] < self._tier[a["id"]] + SUB]
             if not upward:
                 return placed
             for a, b in upward:
-                floors[b["id"]] = max(floors.get(b["id"], 0), self._tier[a["id"]] + 1)
+                floors[b["id"]] = max(floors.get(b["id"], 0), self._tier[a["id"]] + SUB)
         return None
 
     def _pack_once(self, n_cols, n_rows, floors):
@@ -394,7 +398,7 @@ class GridLayout(Cartographer):
             lims = []
             for b in u["boxes"]:
                 # (moves into line-ups already placed can't be honoured here: _pack repairs them)
-                lims.append(max([tier[a["id"]] + 1 for a in into[b["id"]] if a["id"] in tier]
+                lims.append(max([tier[a["id"]] + SUB for a in into[b["id"]] if a["id"] in tier]
                                 + [floors.get(b["id"], 0)]))
             era_rows = [self._era_row(eras, b["start"]) for b in u["boxes"]]
             links = [(c, self.linked.get((u["band"].id, bid), 0)) for bid, cs in cols_of.items()
@@ -406,10 +410,10 @@ class GridLayout(Cartographer):
                 if max(latest[c0:c0 + w]) > first:
                     continue  # time runs down every column: nothing later above it
                 floor = max(sky[c0:c0 + w])
-                rows, r = [], floor - 1
+                rows, r = [], floor - SUB
                 for lo in lims:
-                    r = max(lo, r + 1)
-                    if n_rows is not None and r >= n_rows:
+                    r = max(lo, r + SUB)
+                    if n_rows is not None and r + SUB > n_rows:
                         rows = None
                         break
                     rows.append(r)
@@ -419,7 +423,7 @@ class GridLayout(Cartographer):
                 near = sum(k * abs(c0 - c) for c, k in links) / max(1, sum(k for _, k in links))
                 near += 3 * min((abs(c0 - c) for c in own), default=0)  # a re-formed band returns to its columns
                 hint = self.hints.get(u["band"].id)
-                cost = ((rows[-1] - rows[0]) + self.top_w * rows[0] + self.era_w * era
+                cost = ((rows[-1] - rows[0]) / SUB + self.top_w * rows[0] / SUB + self.era_w * era / SUB
                         + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0)
                         + (HINT_WEIGHT * abs(c0 - hint) if hint is not None else 0.0))
                 if best is None or cost < best[0]:
@@ -428,9 +432,9 @@ class GridLayout(Cartographer):
                 return None
             _, c0, rows = best
             for c in range(c0, c0 + w):
-                sky[c] = rows[-1] + 1
+                sky[c] = rows[-1] + SUB
                 latest[c] = max(latest[c], u["boxes"][-1]["start"])
-                for t in range(rows[0], rows[-1] + 1):
+                for t in range(rows[0], rows[-1] + SUB):
                     cell[(t, c)] = "gap" if c == c0 + w - 1 else u["band"].id
             for b, r in zip(u["boxes"], rows):
                 tier[b["id"]], col0[b["id"]] = r, c0
@@ -465,7 +469,7 @@ class GridLayout(Cartographer):
             if placed is None:
                 continue
             used_cols = max(self._col0[b["id"]] + 2 * b["span"] + 1 for b in placed)
-            used_rows = max(self._tier.values()) + 1
+            used_rows = math.ceil((max(self._tier.values()) + SUB) / SUB)
             w = 2 * MARGIN + used_cols * self.unit
             h = TITLE_H + used_rows * self.row_h + FOOTER_H
             area = min(max(w, h / 2 ** 0.5) * max(h, w * 2 ** 0.5), max(w, h * 2 ** 0.5) * max(h, w / 2 ** 0.5))
@@ -479,7 +483,7 @@ class GridLayout(Cartographer):
     def _geometry(self, placed):
         ls, slot, unit = self.ls, self.slot, self.unit
         used_cols = max(self._col0[b["id"]] + 2 * b["span"] for b in placed)
-        used_rows = max(self._tier.values()) + 1
+        used_rows = math.ceil((max(self._tier.values()) + SUB) / SUB)
         content_w = 2 * MARGIN + used_cols * unit
         content_h = TITLE_H + used_rows * self.row_h + FOOTER_H
         if self.max_cols is not None:  # the sheet itself, at the smallest readable size
@@ -503,7 +507,7 @@ class GridLayout(Cartographer):
         self.hs = min(MAX_HSPREAD, max(1.0, (width - 2 * MARGIN) / (used_cols * unit)))
         x0 = (width - used_cols * unit * self.hs) / 2
         self.x0 = x0
-        row_y = lambda t: TITLE_H + t * pitch
+        row_y = lambda t: TITLE_H + t * pitch / SUB  # t in sub-rows
         self.pitch = pitch
 
         boxes = []
@@ -535,17 +539,16 @@ class GridLayout(Cartographer):
             boxes.append(b)
 
         trunks, edges = self._route(placed, x0, row_y)
-        events = self._place_notes(boxes, trunks, edges, x0, row_y, width, height, self.max_rows or used_rows)
+        events = self._place_notes(boxes, trunks, edges, x0, row_y, width, height, (self.max_rows or used_rows) * SUB)
         years = []
-        for t in range(used_rows):
+        for t in sorted(set(self._tier.values())):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
-            if starts:
-                years.append({"year": int(min(starts)), "y": row_y(t) + 4})
+            years.append({"year": int(min(starts)), "y": row_y(t) + 4})
         layout = {
             "width": width, "height": height, "paper": self.paper,
             "title": self.tree.title, "subtitle": self.subtitle, "lettering": self.ls, "timeline": False,
             "axis": {"left": MARGIN / 2, "right": width - MARGIN / 2, "top": TITLE_H - 20,
-                     "bottom": row_y(used_rows)},
+                     "bottom": row_y(used_rows * SUB)},
             "years": years,
             "boxes": [{k: v for k, v in b.items() if k not in ("lineup", "cols")} | {"cols": dict(b["cols"])}
                       for b in boxes],
@@ -578,10 +581,12 @@ class GridLayout(Cartographer):
         # the blocks themselves, not the width their band reserves (a band's
         # narrower line-ups leave room beside them), and every line's path
         blocks, busy = set(), set()
-        for b in boxes:
-            for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
-                busy.add((b["row"], c))
-            blocks.update((b["row"], c) for c in range(b["lane"], b["lane"] + 2 * b["span"]))  # not its gap for lines
+        for b in boxes:  # a block's own sub-rows (not its channel below), and its gap column for lines
+            depth = math.ceil(self.block_h / (self.pitch / SUB) - 0.01)
+            for t in range(b["row"], b["row"] + depth):
+                for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
+                    busy.add((t, c))
+                blocks.update((t, c) for c in range(b["lane"], b["lane"] + 2 * b["span"]))
         for line in list(trunks) + list(edges):
             pts = line["points"]
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
@@ -640,9 +645,11 @@ class GridLayout(Cartographer):
             if spot is None:
                 continue
             t, c, w, lines, path_cells, tie = spot
-            for k in range(c, c + w):
-                free.discard((t, k))
-                blocks.add((t, k))
+            k_rows = math.ceil((NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / (self.pitch / SUB))
+            for i in range(k_rows):
+                for k in range(c, c + w):
+                    free.discard((t + i, k))
+                    blocks.add((t + i, k))
             for cell in path_cells:  # a later note mustn't sit on this tie
                 free.discard(cell)
             x, y = self._col_x(c) + EVENT_PAD / 2, row_y(t) + EVENT_PAD / 2
@@ -660,43 +667,48 @@ class GridLayout(Cartographer):
         its line-up, with a tie that crosses no block."""
         bl, br = box["lane"], box["lane"] + 2 * box["span"] + 1
         home = box["row"]
-        mid = lambda t: row_y(t) + self.title_h / 2
+        sub_h = self.pitch / SUB
+        depth = math.ceil(self.block_h / sub_h - 0.01)
+        mid = lambda t: row_y(t) + min(self.title_h, sub_h) / 2
         colx = lambda k: (self._col_x(k) + self._col_x(k + 1)) / 2
-        own = {(home, k) for k in range(bl, br)}
+        own = {(r, k) for r in range(home, home + depth) for k in range(bl, br)}
         clear = lambda cells: all(cell not in blocks or cell in own for cell in cells)
         best = None
+        row_set = set(rows)
         for t in sorted(rows, key=lambda r: abs(r - home)):
-            if abs(t - home) > NOTE_ROWS or (best is not None and abs(t - home) * 6 > best[0][0]):
+            if abs(t - home) > NOTE_ROWS * SUB or (best is not None and abs(t - home) * 6 / SUB > best[0][0]):
                 continue
-            room = row_y(t + 1) - row_y(t) - EVENT_PAD
             for w in EVENT_WIDTHS:
                 text_w = self._col_x(w) - self._col_x(0) - 2 * EVENT_PAD
                 lines = wrap(n["text"], HAND, NOTE_SIZE, text_w)
-                if (NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) > room
-                        or (n["heading"] and text_width(n["heading"], HAND, DATE_SIZE) > text_w)):
+                if n["heading"] and text_width(n["heading"], HAND, DATE_SIZE) > text_w:
+                    continue
+                k_rows = math.ceil((NOTE_LINE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / sub_h)
+                if k_rows > 2 * SUB or any(t + i not in row_set for i in range(k_rows)):
                     continue
                 for c in range(c_lo, c_hi - w + 1):
-                    if not all((t, k) in free for k in range(c, c + w)):
+                    if not all((t + i, k) in free for i in range(k_rows) for k in range(c, c + w)):
                         continue
                     right = c >= br
                     edge_x = box["x"] + box["w"] + 4 if right else box["x"] - 4
                     near_x = self._col_x(c) + EVENT_PAD / 2 if c >= bl else self._col_x(c + w) - EVENT_PAD / 2
-                    if t == home:
+                    if t <= home < t + k_rows:  # level with the line-up's name: tied along its sub-row
                         if not right and c + w > bl:
                             continue
                         between = range(br, c) if right else range(c + w, bl)
-                        cells = [(t, k) for k in between]
+                        cells = [(home, k) for k in between]
                         if not clear(cells):
                             continue
                         cost = len(cells)
                         tie = [(edge_x, mid(home)), (near_x, mid(home))]
                     else:
                         step = 1 if t > home else -1
+                        start = home + depth if t > home else home - 1  # below (or above) the block
                         lo_c, hi_c = min(bl, c), max(br - 1, c + w - 1)
                         route = None
                         # straight out of the block's bottom (or top), down its own column, along to the note
                         tc = min(max(c if c > bl else c + w - 1, bl), br - 1)  # its gap column at most
-                        down = [(r, tc) for r in range(home + step, t, step)]
+                        down = [(r, tc) for r in range(start, t, step)]
                         along = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
                         if clear(down + along):
                             y0 = box["y"] + box["h"] if t > home else box["y"]
@@ -705,7 +717,7 @@ class GridLayout(Cartographer):
                         if route is None:  # else along the home row to a column beside the block first
                             tc = br if right or c >= bl else bl - 1
                             leg1 = [(home, k) for k in (range(br, tc + 1) if tc >= br else range(tc, bl))]
-                            leg2 = [(r, tc) for r in range(home + step, t, step)]
+                            leg2 = [(r, tc) for r in range(home + step, t, step) if (r, tc) not in own]
                             leg3 = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
                             if clear(leg1 + leg2 + leg3):
                                 route = (leg1 + leg2 + leg3, [(edge_x, mid(home)), (colx(tc), mid(home)), (colx(tc), mid(t)),
@@ -713,7 +725,7 @@ class GridLayout(Cartographer):
                         if route is None:
                             continue
                         cells, tie = route
-                        cost = 6 * abs(t - home) + len(cells)
+                        cost = 6 * abs(t - home) / SUB + len(cells)
                     score = (cost, w)
                     if best is None or score < best[0]:
                         best = (score, (t, c, w, lines, cells, tie))
@@ -779,45 +791,69 @@ class GridLayout(Cartographer):
     # ------------------------------------------------------------------
     def _route(self, placed, x0, row_y):
         """Each musician's line straight down to their next line-up in the
-        same run; every other move along the channel under the source row,
-        down the nearest clear gap, along the channel above the target row
-        and into place. Each run takes the nearest free track in its channel or
-        gap (_Tracks), so no two lines share a stretch of ink."""
+        same run; every other move drops into the channel under its line-up,
+        along to a clear gap, down it, along the channel over the line-up it
+        goes to and into place. With each column at its own pace the channels
+        don't run level across the page, so every run is checked against the
+        blocks themselves and the gap chosen is the shortest way round them.
+        Each run takes the nearest free track (_Tracks), so no two lines share
+        a stretch of ink."""
         member = {(b["id"], m["person_id"]): m for b in placed for m in b["members"]}
         unit_of = {}
         for u in self._units_cache:
             for b in u["boxes"]:
                 unit_of[b["id"]] = id(u)
-        channel_y = lambda t: row_y(t) + self.block_h + (self.pitch - self.block_h) / 2
-        channels = _Tracks((self.pitch - self.block_h) / 2 - 2, CHANNEL_STEP)  # row -> horizontal runs
-        gaps = _Tracks(self.unit * self.hs / 2 - 3)               # column -> vertical runs
+        ch = self.pitch - self.block_h
+        rects = [(b["x"] - 2, b["y"], b["x"] + b["w"] + 2, b["y"] + self.block_h, b["id"]) for b in placed]
+        below = lambda b: b["y"] + self.block_h + ch / 2
+        above = lambda b: b["y"] - ch / 2
+        channels = _Tracks(ch / 2 - 2, CHANNEL_STEP)  # horizontal runs, keyed by their level
+        gaps = _Tracks(self.unit * self.hs / 2 - 3)   # vertical runs, keyed by their x
+        step = self.unit * self.hs
+        n_cols = int((max(r[2] for r in rects) - x0) / step) + 2
+        gap_xs = [self._col_x(c + 0.5) for c in range(-1, n_cols + 1)]
+
+        def blocked(x1, y1, x2, y2, skip=()):
+            lx, hx, ly, hy = min(x1, x2), max(x1, x2), min(y1, y2), max(y1, y2)
+            return any(rx0 < hx and lx < rx1 and ry0 < hy and ly < ry1 and bid not in skip
+                       for rx0, ry0, rx1, ry1, bid in rects) if (hx > lx or hy > ly) else False
 
         trunks, edges = [], []
         for person_id, a, b in self.moves:
             ma, mb = member.get((a["id"], person_id)), member.get((b["id"], person_id))
             if ma is None or mb is None:
                 continue  # beyond MAX_MEMBERS
-            ta, tb = self._tier[a["id"]], self._tier[b["id"]]
+            skip = (a["id"], b["id"])
             if unit_of[a["id"]] == unit_of[b["id"]] and b["number"] == a["number"] + 1:
                 pts = [(ma["cx"], ma["bottom"])]
                 if mb["cx"] != ma["cx"]:
-                    y = channel_y(tb - 1) + channels.take(tb - 1, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
+                    level = round(above(b))
+                    y = above(b) + channels.take(level, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
                     pts += [(ma["cx"], y), (mb["cx"], y)]
                 pts.append((mb["cx"], b["bar_y"]))
                 trunks.append({"person_id": person_id, "points": pts, "dashed": b["after_gap"]})
                 continue
-            if tb == ta + 1:
-                y1 = channel_y(ta) + channels.take(ta, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
-                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (mb["cx"], y1), (mb["cx"], b["bar_y"])]
-            else:
-                step = self.unit * self.hs
-                c = self._clear_gap(ta + 1, tb - 1, (mb["cx"] - x0) / step, (ma["cx"] - x0) / step)
-                xc = self._col_x(c + 0.5) if c is not None else x0 - MARGIN / 2
-                y1, y2 = channel_y(ta), channel_y(tb - 1)
-                xg = xc + gaps.take(c, y1, y2)
-                y1 += channels.take(ta, ma["cx"], xg, side=-1, leaves=ma["cx"])
-                y2 += channels.take(tb - 1, xg, mb["cx"], side=1, arrives=mb["cx"])
-                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (xg, y1), (xg, y2), (mb["cx"], y2),
+            y1, y2 = below(a), above(b)
+            pts = None
+            if abs(y2 - y1) < 1 and not blocked(ma["cx"], y1, mb["cx"], y1, skip):
+                level = round(y1)
+                y = y1 + channels.take(level, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
+                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y), (mb["cx"], y), (mb["cx"], b["bar_y"])]
+            if pts is None:
+                best = None
+                for xg in gap_xs + [ma["cx"], mb["cx"]]:
+                    if (blocked(ma["cx"], y1, xg, y1, skip) or blocked(xg, y1, xg, y2, skip)
+                            or blocked(xg, y2, mb["cx"], y2, skip) or blocked(mb["cx"], y2, mb["cx"], b["bar_y"], skip)
+                            or blocked(ma["cx"], ma["bottom"], ma["cx"], y1, skip)):
+                        continue
+                    d = abs(xg - ma["cx"]) + abs(xg - mb["cx"])
+                    if best is None or d < best[0]:
+                        best = (d, xg)
+                xg = best[1] if best else x0 - MARGIN / 2  # no way round: down the margin
+                xg += gaps.take(round(xg), y1, y2) if xg not in (ma["cx"], mb["cx"]) else 0
+                ya = y1 + channels.take(round(y1), ma["cx"], xg, side=-1, leaves=ma["cx"])
+                yb = y2 + channels.take(round(y2), xg, mb["cx"], side=1, arrives=mb["cx"])
+                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], ya), (xg, ya), (xg, yb), (mb["cx"], yb),
                        (mb["cx"], b["bar_y"])]
             edges.append({"person_id": person_id, "from": a["id"], "to": b["id"],
                           "same_band": a["band_id"] == b["band_id"],
@@ -829,14 +865,3 @@ class GridLayout(Cartographer):
                                    "points": [(m["cx"], m["bottom"]), (m["cx"], m["bottom"] + 20)]})
         return trunks, edges
 
-    def _clear_gap(self, t1, t2, near, also):
-        """A column clear of line-ups from row t1 to t2 (gaps beside blocks, or
-        empty cells), nearest the target and then the source."""
-        n_cols = max(c for _, c in self._cells) + 2 if self._cells else 1
-        best = None
-        for c in range(-1, n_cols + 1):
-            if all(self._cells.get((t, c)) in (None, "gap") for t in range(t1, t2 + 1)):
-                d = abs(c - near) + 0.5 * abs(c - also)
-                if best is None or d < best[0]:
-                    best = (d, c)
-        return best[1] if best else None

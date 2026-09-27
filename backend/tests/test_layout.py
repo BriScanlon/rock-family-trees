@@ -141,12 +141,14 @@ def test_lettering_styles():
     assert "font-family:'Amatic SC'" in heavy and "font-family:'Amatic SC'" not in classic
 
 
-def test_rows_line_up_across_the_page(layout):
-    # Frame's grid: line-ups of one era share a row, names and bars level.
-    by_row = {}
-    for b in layout["boxes"]:
-        by_row.setdefault(b["row"], set()).add((round(b["y"], 3), round(b["bar_y"], 3)))
-    assert len(by_row) > 1 and all(len(v) == 1 for v in by_row.values())
+def test_line_ups_never_overlap(layout):
+    # each column keeps its own pace (the user chose that over rows level
+    # across the page), but no two blocks may share any of the page
+    boxes = layout["boxes"]
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert not (a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"] and
+                        a["y"] < b["y"] + b["h"] and b["y"] < a["y"] + a["h"]), (a["id"], b["id"])
 
 
 def test_every_member_takes_one_slot(layout):
@@ -175,7 +177,7 @@ def test_time_runs_down_every_column(layout):
 def test_every_move_goes_down(layout):
     by_id = {b["id"]: b for b in layout["boxes"]}
     for e in layout["edges"]:
-        assert by_id[e["to"]]["row"] > by_id[e["from"]]["row"], (e["from"], e["to"])
+        assert by_id[e["to"]]["y"] >= by_id[e["from"]]["y"] + by_id[e["from"]]["h"], (e["from"], e["to"])
 
 
 @pytest.mark.parametrize("root,depth", [("demo:yardbirds", 4), ("demo:acdc", 3)])
@@ -426,3 +428,19 @@ def test_a_musicians_other_bands_are_one_sentence_per_line_up():
     grid = GridLayout(tree, paper=None)
     notes = [n["text"] for n in grid._info_notes().get("b", [])]
     assert notes == ["Dave LaRue also with Trio (2003), Colours (2011)."]
+
+
+@pytest.mark.parametrize("root,depth,paper", [("demo:yardbirds", 4, "A2"), ("demo:acdc", 3, "A2")])
+def test_moves_go_round_other_line_ups(root, depth, paper):
+    """With each column at its own pace the channels don't run level across
+    the page: a move's line must still never cross a line-up it doesn't
+    join (the margin is the last resort)."""
+    from app.fitting import fit_tree
+    _, L, _ = fit_tree(harvester_for(root).harvest(root, depth=depth), paper=paper, max_bands=24)
+    for e in L["edges"]:
+        for (x1, y1), (x2, y2) in zip(e["points"], e["points"][1:]):
+            lx, hx, ly, hy = min(x1, x2), max(x1, x2), min(y1, y2), max(y1, y2)
+            for b in L["boxes"]:
+                if b["id"] in (e["from"], e["to"]):
+                    continue
+                assert not (b["x"] < hx and lx < b["x"] + b["w"] and b["y"] < hy and ly < b["y"] + b["h"]), (e["from"], e["to"], b["id"])
