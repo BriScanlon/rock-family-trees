@@ -830,22 +830,34 @@ class GridLayout(Cartographer):
                         start = home + depth if t > home else home - 1  # below (or above) the block
                         lo_c, hi_c = min(bl, c), max(br - 1, c + w - 1)
                         route = None
+                        top, bottom = row_y(t) + EVENT_PAD / 2, row_y(t + k_rows) - EVENT_PAD / 2
+
+                        def end(tc):
+                            """Where the tie meets the note: the side facing it, or its top or
+                            bottom edge when it comes straight down or up - never through its text."""
+                            if tc < c:
+                                return [(colx(tc), mid(t)), (self._col_x(c) + EVENT_PAD / 2, mid(t))]
+                            if tc >= c + w:
+                                return [(colx(tc), mid(t)), (self._col_x(c + w) - EVENT_PAD / 2, mid(t))]
+                            return [(colx(tc), top if t > home else bottom)]
+
                         # straight out of the block's bottom (or top), down its own column, along to the note
                         tc = min(max(c if c > bl else c + w - 1, bl), br - 1)  # its gap column at most
                         down = [(r, tc) for r in range(start, t, step)]
                         along = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
                         if clear(down + along):
                             y0 = box["y"] + box["h"] if t > home else box["y"]
-                            route = (down + along, [(colx(tc), y0), (colx(tc), mid(t)),
-                                                    (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
-                        if route is None:  # else along the home row to a column beside the block first
-                            tc = br if right or c >= bl else bl - 1
-                            leg1 = [(home, k) for k in (range(br, tc + 1) if tc >= br else range(tc, bl))]
-                            leg2 = [(r, tc) for r in range(home + step, t, step) if (r, tc) not in own]
-                            leg3 = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
-                            if clear(leg1 + leg2 + leg3):
-                                route = (leg1 + leg2 + leg3, [(edge_x, mid(home)), (colx(tc), mid(home)), (colx(tc), mid(t)),
-                                                              (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
+                            route = (down + along, [(colx(tc), y0)] + end(tc))
+                        if route is None:  # else out of the side facing the note, along its row, down a column
+                            on_right = (c + w / 2) >= (bl + br) / 2
+                            tc = br if on_right else bl - 1
+                            if c_lo <= tc < c_hi:  # a column on the sheet
+                                x_edge = box["x"] + box["w"] + 4 if on_right else box["x"] - 4
+                                leg1 = [(home, k) for k in (range(br, tc + 1) if on_right else range(tc, bl))]
+                                leg2 = [(r, tc) for r in range(home + step, t, step) if (r, tc) not in own]
+                                leg3 = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
+                                if clear(leg1 + leg2 + leg3):
+                                    route = (leg1 + leg2 + leg3, [(x_edge, mid(home)), (colx(tc), mid(home))] + end(tc))
                         if route is None:
                             continue
                         cells, tie = route
