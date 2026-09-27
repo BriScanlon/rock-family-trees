@@ -67,12 +67,32 @@ def test_the_article_is_about_one_album_of_the_band(store):
     assert "Band: Band X" in prompt and "Album: Mill Sessions" in prompt and "Frank Zappa" in prompt
 
 
-def test_the_most_written_about_albums_and_tours_are_read():
-    works = [{"wikidata": f"Q{i}", "kind": k, "title": f"{k} {i}", "date": None, "sitelinks": s}
-             for i, (k, s) in enumerate([("album", 30), ("album", 10), ("tour", 9), ("album", 25),
-                                         ("album", 28), ("tour", 3), ("tour", 5)])]
+def test_the_longest_album_and_tour_articles_are_read():
+    # Fireball is covered by as many Wikipedias as Machine Head, but Machine
+    # Head's article (the Montreux fire) is twice as long
+    works = [{"wikidata": f"Q{i}", "kind": k, "title": t, "date": None, "sitelinks": s, "length": n}
+             for i, (k, t, s, n) in enumerate([
+                 ("album", "Fireball", 30, 23531), ("album", "Machine Head", 30, 50390),
+                 ("album", "Burn", 26, 56079), ("album", "Shades", 33, 49062), ("album", "Who Do We", 27, 9000),
+                 ("tour", "Songs That Built Rock", 5, 24542), ("tour", "Secret USA", 3, 4000), ("tour", "Debut", 2, 6000)])]
     chosen = events.choose_works(works, albums=3, tours=2)
-    assert [w["sitelinks"] for w in chosen] == [30, 28, 25, 9, 5]
+    assert [w["title"] for w in chosen] == ["Burn", "Machine Head", "Shades", "Songs That Built Rock", "Debut"]
+
+
+def test_article_lengths_follow_redirects():
+    from app.wikipedia import WikipediaClient
+
+    class Session:
+        headers = {}
+
+        def get(self, url, params=None, timeout=None):
+            body = {"query": {"redirects": [{"from": "Machine Head", "to": "Machine Head (album)"}],
+                              "pages": [{"title": "Machine Head (album)", "length": 50390},
+                                        {"title": "Fireball (album)", "length": 23531}]}}
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+
+    got = WikipediaClient(min_interval=0, session=Session()).lengths(["Machine Head", "Fireball (album)"])
+    assert got == {"Machine Head": 50390, "Fireball (album)": 23531}
 
 
 def test_an_event_already_in_the_bands_notes_is_not_told_twice():
@@ -125,7 +145,7 @@ def test_events_sit_in_free_space_beside_their_line_up():
     from app.narrative import lineup_for
     evs = [dict(e, year=float(e["year"]), subject="Mill Sessions") for e in [
         {"date": "1966-06", "year": 1966.4, "significance": 5, "text": "Played the Marquee so loud the ceiling came down on the front row."},
-        {"date": "1967-02", "year": 1967.1, "significance": 2, "text": "Toured Australia with Roy Orbison and the Walker Brothers in a single week."},
+        {"date": "1967-02", "year": 1967.1, "significance": 3, "text": "Toured Australia with Roy Orbison and the Walker Brothers in a single week."},
     ]]
     tree, L = _layout_with_events(evs)
     placed = L["events"]
@@ -155,3 +175,10 @@ def test_an_event_the_notes_already_tell_is_left_out():
     told = " ".join(s["text"] for s in yb.stories) + " ".join(b["notes_text"] for b in L["boxes"])
     if "Clapton" in told and "Mayall" in told:
         assert L["events"] == []
+
+
+def test_a_minor_detail_is_not_placed():
+    minor = {"date": "1966-06", "year": 1966.4, "significance": 2, "subject": "X",
+             "text": "Reissued on coloured vinyl with two bonus tracks for the anniversary."}
+    tree, L = _layout_with_events([minor])
+    assert L["events"] == []

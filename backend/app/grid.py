@@ -607,7 +607,9 @@ class GridLayout(Cartographer):
         for b in boxes:
             starts[b["row"]] = min(starts.get(b["row"], 1e9), b["start"])
         era = lambda t: (starts.get(t, 1e9), min((s for r, s in starts.items() if r > t), default=1e9))
-        pending = sorted(((e, band) for band in self.tree.bands.values() for e in band.events),
+        from app.events import MIN_SIGNIFICANCE
+        pending = sorted(((e, band) for band in self.tree.bands.values() for e in band.events
+                          if e.get("significance", 1) >= MIN_SIGNIFICANCE),
                          key=lambda eb: (-eb[0].get("significance", 1), -eb[0].get("sitelinks", 0), eb[0]["year"]))
         told = {band.id: [s["text"] for s in band.stories] for band in self.tree.bands.values()}
         for b in boxes:

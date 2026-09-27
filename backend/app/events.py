@@ -18,9 +18,10 @@ import os
 from app import narrative
 
 EVENT_BANDS = int(os.getenv("EVENT_BANDS", "12"))    # top-ranked bands whose albums and tours are read
-EVENT_ALBUMS = int(os.getenv("EVENT_ALBUMS", "3"))   # a band's most written-about albums read
+EVENT_ALBUMS = int(os.getenv("EVENT_ALBUMS", "4"))   # a band's most written-about albums read
 EVENT_TOURS = int(os.getenv("EVENT_TOURS", "2"))     # and tours
 EVENT_CHARS = 160                                    # an event block holds a little more than a note
+MIN_SIGNIFICANCE = int(os.getenv("EVENT_MIN_SIGNIFICANCE", "3"))  # placed on the poster from this up
 ARTICLE_CHARS = 60000                                # tour articles run long (set lists): enough for the story
 
 SYSTEM = """You pick out the moments worth telling from a Wikipedia article about one album or tour by a rock band, for a rock family tree in the style of Pete Frame's Rock Family Trees. Each becomes a small note beside the line-up it happened to.
@@ -30,7 +31,7 @@ Worth telling:
 - landmark performances: record crowds, famous festivals, legendary or disastrous shows,
 - turning points: a breakthrough, a first number one, a ban, a controversy, a split on the road.
 
-Not worth telling: chart positions alone, track listings, personnel lists, reviews, sales figures unless they are a record.
+Never worth telling: sales figures and certifications, chart positions, reissues, bonus tracks and release formats, track listings, reviews, and who joined or left (the tree draws that). If the article's story is only those, give no events.
 
 Work only from the article: each event must be something the article states. Nothing from memory.
 
@@ -40,7 +41,7 @@ For each event give:
 - date: when it happened, "YYYY-MM" or "YYYY",
 - text: the note,
 - source: the sentence of the article that supports it, copied exactly, character for character; two sentences joined by "..." if needed,
-- significance: 1 to 5, where 5 is a moment most rock fans know (Smoke on the Water's fire) and 1 a detail.
+- significance: 1 to 5. 5: a moment most rock fans know (the Montreux fire behind Smoke on the Water). 4: a story fans of the band retell. 3: a notable incident. 2 or 1: a detail. Be sparing with 4 and 5.
 
 At most three events, the most memorable first. None if the article tells nothing memorable."""
 
@@ -79,11 +80,12 @@ def events_key(work, revision, model):
 
 
 def choose_works(works, albums=EVENT_ALBUMS, tours=EVENT_TOURS):
-    """The band's most written-about albums and tours (most Wikipedias with an
-    article on them): where its famous moments are told."""
-    ranked = sorted(works, key=lambda w: -w["sitelinks"])
+    """The band's most written-about albums and tours - the longest English
+    articles, then the most Wikipedias covering them: where its famous
+    moments are told."""
+    ranked = sorted(works, key=lambda w: (-(w.get("length") or 0), -w["sitelinks"]))
     pick = [w for w in ranked if w["kind"] == "album"][:albums] + [w for w in ranked if w["kind"] == "tour"][:tours]
-    return sorted(pick, key=lambda w: -w["sitelinks"])
+    return pick
 
 
 def write_events(band, work, article, client=None, use_cache=True, store=None):

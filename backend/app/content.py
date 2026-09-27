@@ -197,8 +197,10 @@ def gather_events(harvester, harvest, opts, progress):
         record = harvest["records"].get(band.id) or {}
         try:
             works = record.get("works")
-            if works is None:
-                works = wiki.works(record.get("wikidata"))
+            if works is None or any("length" not in w for w in works):
+                works = works if works is not None else wiki.works(record.get("wikidata"))
+                lengths = wiki.lengths([w["title"] for w in works])
+                works = [dict(w, length=lengths.get(w["title"], 0)) for w in works]
                 record["works"] = works
                 harvester.store.put(record)
             for work in ev.choose_works(works):

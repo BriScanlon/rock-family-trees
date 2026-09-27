@@ -106,6 +106,26 @@ class WikipediaClient:
             return None
         return {"title": parse.get("title", title), "text": parse.get("wikitext") or "", "revision": parse.get("revid")}
 
+    def lengths(self, titles):
+        """{title: article length in bytes}, 50 titles a call. A long article
+        about an album has a story to tell (Machine Head's, with the Montreux
+        fire, runs twice Fireball's); the number of Wikipedias covering it
+        doesn't say so (debut albums are covered everywhere)."""
+        out = {}
+        titles = list(dict.fromkeys(t for t in titles if t))
+        for i in range(0, len(titles), 50):
+            batch = titles[i:i + 50]
+            data = self._get(WIKIPEDIA_API, {"action": "query", "prop": "info", "redirects": 1,
+                                             "titles": "|".join(batch)})
+            query = data.get("query") or {}
+            back = {r["to"]: r["from"] for r in query.get("redirects", [])}
+            back.update({n["to"]: n["from"] for n in query.get("normalized", [])})
+            for page in query.get("pages", []):
+                title = page.get("title")
+                original = back.get(title, title)
+                out[back.get(original, original)] = page.get("length", 0)
+        return out
+
     def works(self, wikidata_id):
         """A band's albums and tours with an English Wikipedia article, most
         written-about first: [{"wikidata", "kind", "title", "date", "sitelinks"}].
