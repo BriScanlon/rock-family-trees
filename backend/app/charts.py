@@ -16,7 +16,9 @@ import re
 import unicodedata
 from datetime import date
 
-MIN_DAYS = 45    # shorter than this is a guest spot, or a slip (Blackmore "rejoined" 12-13 Aug 2026)
+PARSER = "charts-2"  # stored with each chart: one read by an older parser is read again
+MIN_DAYS = 30    # shorter than this is a stand-in or a slip (Blackmore "rejoined" 12-13 Aug 2026);
+                 # Dale Crover's 43 days in Nirvana (a demo and shows, 1988) count
 JOIN_DAYS = 31   # stints closer than this are one stint (a change of instrument, not a departure)
 
 
@@ -112,7 +114,7 @@ def parse_timeline(source, today=None):
                 continue
         f = _fields(line)
         if section == "colors" and "id" in f and "legend" in f:
-            roles[f["id"]] = f["legend"].replace("_", " ").strip().lower()
+            roles[f["id"]] = f["legend"].replace("_", " ").strip().lower()  # "bass, occasional vocals"
         elif section == "bardata" and "bar" in f:
             name = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", f.get("text") or f["bar"])
             bars[f["bar"]] = re.sub(r"<[^>]+>|'''?", "", name).strip()
@@ -172,10 +174,23 @@ def chart_members(source, today=None):
                     weight[role] = max(weight.get(role, 0), overlap + (100000 if principal else 0))
             open_ = any(pe is None and ps < e for ps, pe, _, _ in m["periods"]) and e >= today
             stints.append({"begin": s.isoformat(), "end": None if open_ else e.isoformat(),
-                           "roles": sorted(weight, key=lambda r: -weight[r])})
-        if stints:
-            members.append({"name": m["name"], "stints": stints})
+                           "roles": _split(sorted(weight, key=lambda r: -weight[r]))})
+        # a member with only stand-in spells is still the chart's: MusicBrainz's
+        # dates for them (Crover in Nirvana, 1987 and 1990) mustn't come back
+        members.append({"name": m["name"], "stints": stints})
     return members
+
+
+def _split(legends):
+    """One instrument per entry: "Bass, occasional vocals" is bass, then vocals
+    (else "vocals" matches first and Krist Novoselic is the singer)."""
+    out = []
+    for legend in legends:
+        for part in re.split(r",|/| and |&", legend):
+            part = re.sub(r"^(occasional|additional|some)\s+", "", part.strip())
+            if part and part not in out:
+                out.append(part)
+    return out
 
 
 def name_key(name):
@@ -213,7 +228,7 @@ def apply_chart(memberships, chart, band_id, band_name, band_begin=None):
             out.append({"person_id": pid, "person_name": pname, "band_id": band_id, "band_name": band_name,
                         "begin": s["begin"], "end": s["end"], "ended": s["end"] is not None,
                         "attributes": attrs, "source": "wikipedia"})
-    out += [m for m in mine if id(m) not in used]
+    out += [m for m in mine if id(m) not in used]  # MusicBrainz's word for anyone the chart doesn't name
     return out + others
 
 

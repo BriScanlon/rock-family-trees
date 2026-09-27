@@ -148,11 +148,12 @@ def gather_charts(harvester, harvest, progress):
     per band; the refiner applies it."""
     if harvest["root_id"].startswith("demo:"):
         return
-    from app.charts import chart_members, find_timeline
+    from app.charts import PARSER, chart_members, find_timeline
     from app.wikipedia import WikipediaClient
     records = harvest["records"]
     todo = [records[b] for b in harvest.get("band_levels", {})
-            if b in records and is_group(records[b]) and records[b].get("chart") is None]
+            if b in records and is_group(records[b])
+            and (records[b].get("chart") is None or not (records[b].get("chart_source") or "").startswith(PARSER))]
     if not todo:
         return
     wiki = WikipediaClient()
@@ -160,7 +161,7 @@ def gather_charts(harvester, harvest, progress):
         progress(59, f"Checking {record['name']}'s members against Wikipedia ({i + 1} of {len(todo)})")
         try:
             title = wiki.title_for(record.get("wikidata"))
-            chart, source = [], None
+            chart, source = [], PARSER
             if title:
                 base = re.sub(r"\s*\([^)]*\)$", "", title)
                 for page in dict.fromkeys([f"List of {title} members", f"List of {base} members", title]):
@@ -168,7 +169,7 @@ def gather_charts(harvester, harvest, progress):
                     timeline = find_timeline(got["text"]) if got else None
                     if timeline:
                         chart = chart_members(timeline)
-                        source = f"{got['title']}@{got['revision']}"
+                        source = f"{PARSER} {got['title']}@{got['revision']}"
                         break
         except Exception as e:  # a correction: go without it this time, try again next time
             print(f"No member chart for {record['name']}: {type(e).__name__}: {e}")

@@ -13,7 +13,7 @@ Period     = from:01/03/1970 till:{{#time:d/m/Y}}
 Colors =
   id:vocals value:red    legend:Lead_vocals
   id:guitar value:green  legend:Guitars
-  id:bass   value:blue   legend:Bass_guitar
+  id:bass   value:blue   legend:Bass,_occasional_vocals
   id:drums  value:orange legend:Drums
   id:studio value:black  legend:Studio_album
 BarData =
@@ -21,6 +21,7 @@ BarData =
   bar:Bob   text:"Bob B. Baker"
   bar:Cy    text:"Cy Cole"
   bar:Dee   text:"Dee Dunn"
+  bar:Eve   text:"Eve Early"
 PlotData =
   width:11 textcolor:black
   color:vocals
@@ -34,6 +35,8 @@ PlotData =
   color:bass
   bar:Dee  from:start      till:15/01/1978
   bar:Dee  from:01/02/1978 till:31/12/1979
+  color:guitar
+  bar:Eve  from:01/03/1975 till:10/03/1975
 }}
 [[Category:Bands]]"""
 
@@ -62,6 +65,14 @@ def test_a_blip_is_left_out_and_a_short_break_is_no_break():
     assert [(s["begin"], s["end"]) for s in chart["Dee Dunn"]] == [("1970-03-01", "1979-12-31")]
 
 
+def test_a_combined_legend_is_one_instrument_each():
+    assert _chart()["Dee Dunn"][0]["roles"] == ["bass", "vocals"]  # not the singer
+
+
+def test_a_member_with_only_a_stand_in_spell_is_still_the_charts():
+    assert _chart()["Eve Early"] == []  # nine days: nothing to draw
+
+
 def test_the_thick_bar_is_the_principal_instrument():
     # Cy sang too (a thin bar), but played guitar: Tommy Bolin, not "vocals"
     assert _chart()["Cy Cole"][0]["roles"] == ["guitars", "lead vocals"]
@@ -84,7 +95,10 @@ def test_the_chart_takes_over_for_the_members_it_has():
     assert [(m["begin"], m["end"]) for m in bob] == [("1970-03-01", "1974-06-30"), ("1980-01-01", None)]
     assert bob[0]["attributes"][0] == "guitars"
     assert any(m["person_id"] == "wiki:" + name_key("Cy Cole") for m in got)  # not on MusicBrainz: added
-    assert any(m["person_id"] == "p-eve" for m in got)  # not on the chart: MusicBrainz's word stands
+    assert not any(m["person_id"] == "p-eve" for m in got)  # on the chart for nine days only: MusicBrainz's 1975-76 goes
+    mb.append({"person_id": "p-fay", "person_name": "Fay Frost", "band_id": "b", "band_name": "Band",
+               "begin": "1985", "end": "1986", "ended": True, "attributes": ["piano"]})
+    assert any(m["person_id"] == "p-fay" for m in apply_chart(mb, chart, "b", "Band"))  # not on it: MusicBrainz stands
     assert any(m["band_id"] == "other" for m in got)    # other bands untouched
     assert "original" in [a for m in got if m["person_id"] == "p-ann" for a in m["attributes"]]
 
