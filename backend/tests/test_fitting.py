@@ -167,3 +167,13 @@ def test_standing_breaks_ties_but_lineage_beats_fame():
         rec.pop("sitelinks")
     order = [b.name for b in Refiner(today=2026.5).build(harvest).bands.values()]
     assert set(order[1:3]) == {"Zenith", "Acorn"}              # unknown standing: neutral
+
+
+def test_a_family_that_fits_whole_is_lettered_as_large_as_the_sheet_allows():
+    """A small family doesn't leave half its sheet blank: it's lettered larger."""
+    from app.fitting import fit_tree
+    from app.pipeline import harvester_for
+    harvest = harvester_for("demo:acdc").harvest("demo:acdc", depth=1)
+    _, small, fit = fit_tree(harvest, paper="A0", max_bands=3)
+    assert fit["bands_shown"] == fit["bands_available"]  # everything fits
+    assert small["stats"]["smallest_text_pt"] > 6.5 * 1.3  # and prints well above the smallest readable size

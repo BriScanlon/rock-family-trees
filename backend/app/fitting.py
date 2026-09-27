@@ -51,16 +51,16 @@ def _compose(trees, chosen):
 ARRANGEMENTS = [None, (1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
 
 
-def _fullest(tree, paper, lettering, subtitle=None):
+def _fullest(tree, paper, lettering, subtitle=None, scale=1.0):
     """The same bands, arranged several ways: keep the layout that covers the
     most of the page (Frame's trees are all but solid ink)."""
     from app.grid import coverage
-    cols, rows, _, _ = GridLayout.sheet(paper, dict(STYLES.get(lettering, STYLES["classic"])))
+    cols, rows, _, _ = GridLayout.sheet(paper, dict(STYLES.get(lettering, STYLES["classic"])), scale)
     best = None
     for weights in ARRANGEMENTS:
         for mirror in (False, True):
             grid = GridLayout(tree, paper=paper, subtitle=subtitle, lettering=lettering, cols=cols, rows=rows,
-                              weights=weights, mirror=mirror)
+                              weights=weights, mirror=mirror, scale=scale)
             if not grid.fits():
                 continue
             layout = grid.layout()
@@ -68,6 +68,22 @@ def _fullest(tree, paper, lettering, subtitle=None):
             if best is None or score > best[0]:
                 best = (score, layout)
     return best[1] if best else _grid(tree, paper, lettering, subtitle).layout()
+
+
+GROW_SCALES = (2.0, 1.8, 1.6, 1.45, 1.3, 1.15)  # larger lettering tried for a family that fits whole
+
+
+def _largest_whole(full, paper, lettering):
+    """The largest lettering at which the whole family, every line-up, still
+    fits the sheet (1.0 if only the smallest readable size does): a small
+    family (Oasis, 18 bands on A1) fills its sheet with bigger lettering, as
+    Frame lettered a small tree large, rather than leaving half of it blank."""
+    style = dict(STYLES.get(lettering, STYLES["classic"]))
+    for scale in GROW_SCALES:
+        cols, rows, _, _ = GridLayout.sheet(paper, style, scale)
+        if GridLayout(full, paper=paper, lettering=lettering, cols=cols, rows=rows, scale=scale).fits():
+            return scale
+    return 1.0
 
 
 def _grid(tree, paper, lettering, subtitle=None):
@@ -175,6 +191,11 @@ def _fit_trees(trees, paper, timeline, lettering, optimise_seconds=0, **layout_k
             if grid.fits():
                 return result(full, grid.layout())
         paper = "A0"
+
+    # the whole family fits: letter it as large as the sheet allows
+    if _grid(full, paper, lettering).fits():
+        scale = _largest_whole(full, paper, lettering)
+        return result(full, _fullest(full, paper, lettering, scale=scale, **layout_kw))
 
     chosen = select(trees, paper, lettering)
     if chosen is None:  # even the root band alone is too big: draw it anyway, as small as it must be

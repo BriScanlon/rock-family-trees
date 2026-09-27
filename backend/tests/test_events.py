@@ -219,3 +219,17 @@ def test_background_reading_gives_way_to_a_poster(tmp_path, monkeypatch):
     with narrative.foreground():
         assert narrative._poster_waiting()  # background requests wait now
     assert not narrative._poster_waiting()  # and go on once the poster is made
+
+
+def test_ties_stay_on_the_sheet_and_off_the_notes_text():
+    from app.pipeline import harvester_for
+    from app.fitting import fit_tree
+    tree, L, _ = fit_tree(harvester_for("demo:yardbirds").harvest("demo:yardbirds", depth=4), paper="A1", max_bands=24)
+    for e in L["events"]:
+        for x, y in e["tie"] or []:
+            assert 0 <= x <= L["width"] and 0 <= y <= L["height"]  # on the sheet
+        pts = e["tie"] or []
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):  # no run passes through the note's own text
+            inside = lambda x, y: e["x"] + 2 < x < e["x"] + e["w"] - 2 and e["y"] + 2 < y < e["y"] + e["h"] - 2
+            mid = ((x1 + x2) / 2, (y1 + y2) / 2)
+            assert not inside(*mid), (e["lines"][:1], pts)
