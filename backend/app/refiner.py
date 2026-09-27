@@ -135,6 +135,7 @@ class Band(BaseModel):
     stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
     albums: List[str] = []  # studio albums, "1972-03-25 Machine Head" (MusicBrainz), notes on their line-ups
     genres: List[str] = []
+    events: List[dict] = []  # dated events from its albums' and tours' articles (app/events.py)
     standing: Optional[int] = None  # Wikipedias with an article on the band (Wikidata sitelinks)
 
 

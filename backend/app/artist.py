@@ -14,6 +14,7 @@ from app.fonts import HAND, STYLES, font_face_css, text_width
 WHITE = "#ffffff"
 AGED = "#f4ecd8"
 INK = "#000000"
+EVENT_INSET = 5  # text inside an event block's rule
 LINE_COLOURS = ["#8c2f1f", "#1f4e79", "#2e6b3a", "#7a4b12", "#5b2a6e", "#1f6f6b", "#9a3a5e", "#4a4a1a"]
 
 
@@ -90,6 +91,7 @@ class Artist:
         self._trunks()
         self._add("</g>")
         self._boxes(wobble)
+        self._events()
         self._footer(W, H)
         self._add("</svg>")
         return "\n".join(self.parts)
@@ -206,6 +208,21 @@ class Artist:
                 for i, note in enumerate(b["notes"]):
                     self._text(b["notes_x"], bar_y + 6 + i * NOTE_LINE, note, NOTE_SIZE)
 
+    def _events(self):
+        """An event: a small ruled block beside its line-up, tied to it with a
+        dotted line - a moment in the band's history (app/events.py)."""
+        for e in self.L.get("events", []):
+            self._add(f'<rect x="{e["x"]:.1f}" y="{e["y"]:.1f}" width="{e["w"]:.1f}" height="{e["h"]:.1f}" '
+                      f'rx="6" fill="none" stroke="{INK}" stroke-width="1"/>')
+            tx, ty = e["x"] + EVENT_INSET, e["y"] + EVENT_INSET
+            self._text(tx, ty + DATE_SIZE, e["heading"], DATE_SIZE, bold=True, fit=e["w"] - 2 * EVENT_INSET)
+            for i, line in enumerate(e["lines"]):
+                self._text(tx, ty + DATE_SIZE + (i + 1) * NOTE_LINE, line, NOTE_SIZE)
+            if e.get("tie"):
+                (x1, y1), (x2, y2) = e["tie"]
+                self._add(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{INK}" '
+                          f'stroke-width="1.2" stroke-dasharray="2 4" stroke-linecap="round"/>')
+
     def _footer(self, W, H):
         fy = self.L["footer_y"]
         x0 = 60
@@ -214,10 +231,13 @@ class Artist:
             ("trunk", "A MUSICIAN'S LINE, FROM ONE LINE-UP TO THE NEXT"),
             ("dashed", "BAND SPLIT, LATER RE-FORMED"),
             ("move", "MUSICIAN MOVES ON TO ANOTHER BAND"),
-        ]
+        ] + ([("event", "AN EVENT IN THE LINE-UP'S STORY")] if self.L.get("events") else [])
         for i, (kind, label) in enumerate(items):
             y = fy + 30 + i * 26
-            if kind == "move":
+            if kind == "event":
+                self._add(f'<line x1="{x0}" y1="{y - 6}" x2="{x0 + 50}" y2="{y - 6}" stroke="{INK}" '
+                          f'stroke-width="1.2" stroke-dasharray="2 4" stroke-linecap="round"/>')
+            elif kind == "move":
                 self._add(f'<path d="M{x0},{y - 12} h24 v8 h24" fill="none" stroke="{INK}" stroke-width="1.2"/>')
             else:
                 dash = ' stroke-dasharray="8 5"' if kind == "dashed" else ""

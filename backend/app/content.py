@@ -29,6 +29,7 @@ class Content:
     trees: dict                      # line-up cap -> FamilyTree (every candidate band)
     stories: dict = field(default_factory=dict)   # band id -> notes (from Wikipedia, and by hand)
     albums: dict = field(default_factory=dict)    # band id -> ["1972-03-25 Machine Head", ...]
+    events: dict = field(default_factory=dict)    # band id -> events from its albums' and tours' articles
     links: list = field(default_factory=list)     # musicians' moves between line-ups
     lettering: str = "classic"
 
@@ -46,6 +47,7 @@ class Content:
             "notes": sum(len(self.stories.get(k, [])) for k in bands),
             "bands_with_albums": sum(1 for k in bands if self.albums.get(k)),
             "albums": sum(len(self.albums.get(k, [])) for k in bands),
+            "events": sum(len(self.events.get(k, [])) for k in bands),
             "links": len(self.links),
         }
 
@@ -65,20 +67,21 @@ def build_content(artist_id, opts, progress=None, harvester=None):
     gather_charts(harvester, harvest, progress)    # before any line-ups: it corrects them
     stories = gather_stories(harvester, harvest, opts, progress) if opts["notes"] else {}
     albums = gather_albums(harvester, harvest, opts, progress)
-    trees = build_trees(harvest, opts["max_bands"], opts.get("title"), stories, albums)
+    events = gather_events(harvester, harvest, opts, progress) if opts["notes"] else {}
+    trees = build_trees(harvest, opts["max_bands"], opts.get("title"), stories, albums, events)
     lettering = opts["lettering"]
     if lettering not in STYLES:  # "auto": follow the root band's genres
         genres = [g for b in harvest["root_bands"] for g in harvest["records"].get(b, {}).get("genres", [])]
         lettering = lettering_for(genres)
     content = Content(root_id=artist_id, root_name=harvest["root_name"], harvest=harvest, trees=trees,
-                      stories=stories, albums=albums, links=links_for(trees[LINEUP_CAPS[0]]), lettering=lettering)
+                      stories=stories, albums=albums, events=events, links=links_for(trees[LINEUP_CAPS[0]]), lettering=lettering)
     s = content.summary()
     progress(74, f"Ready: {s['bands']} bands, {s['lineups']} line-ups, {s['notes']} notes, "
-                 f"{s['albums']} albums, {s['links']} links")
+                 f"{s['albums']} albums, {s['events']} events, {s['links']} links")
     return content
 
 
-def build_trees(harvest, max_bands, title=None, stories=None, albums=None):
+def build_trees(harvest, max_bands, title=None, stories=None, albums=None, events=None):
     """Every candidate band at each level of detail, with its notes and albums."""
     trees = {cap: Refiner(max_bands=max_bands, max_lineups_per_band=cap).build(harvest, title=title)
              for cap in LINEUP_CAPS}
@@ -86,6 +89,7 @@ def build_trees(harvest, max_bands, title=None, stories=None, albums=None):
         for band in tree.bands.values():
             band.stories = (stories or {}).get(band.id, [])
             band.albums = (albums or {}).get(band.id, [])
+            band.events = (events or {}).get(band.id, [])
     return trees
 
 
@@ -176,6 +180,38 @@ def gather_charts(harvester, harvest, progress):
             continue
         record["chart"], record["chart_source"] = chart, source
         harvester.store.put(record)
+
+
+def gather_events(harvester, harvest, opts, progress):
+    """Events from the top-ranked bands' most written-about albums and tours
+    (app/events.py): {band id: [{"date", "year", "text", "significance",
+    "subject"}]}. Each band's albums and tours are looked up once (Wikidata)
+    and kept on its record; each article is read once per revision."""
+    if harvest["root_id"].startswith("demo:"):
+        return {}
+    from app import events as ev
+    from app.wikipedia import WikipediaClient
+    ranked = list(Refiner(max_bands=opts["max_bands"]).build(harvest).bands.values())[:ev.EVENT_BANDS]
+    wiki, out = WikipediaClient(), {}
+    for i, band in enumerate(ranked):
+        record = harvest["records"].get(band.id) or {}
+        try:
+            works = record.get("works")
+            if works is None:
+                works = wiki.works(record.get("wikidata"))
+                record["works"] = works
+                harvester.store.put(record)
+            for work in ev.choose_works(works):
+                progress(73, f"Reading about {band.name}'s {work['title']} ({i + 1} of {len(ranked)})")
+                article = wiki.article(work["title"])
+                if not article:
+                    continue
+                got = ev.write_events(band, work, article, store=harvester.store)
+                out.setdefault(band.id, []).extend(
+                    dict(n, subject=work["title"], kind=work["kind"], sitelinks=work["sitelinks"]) for n in got["notes"])
+        except Exception as e:  # events are extra: the poster is drawn without them
+            print(f"No events for {band.name}: {type(e).__name__}: {e}")
+    return out
 
 
 def gather_stories(harvester, harvest, opts, progress):

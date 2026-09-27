@@ -16,6 +16,20 @@ import requests
 
 WIKIDATA_API = os.getenv("WIKIDATA_API", "https://www.wikidata.org/w/api.php")
 WIKIPEDIA_API = os.getenv("WIKIPEDIA_API", "https://en.wikipedia.org/w/api.php")
+WIKIDATA_SPARQL = os.getenv("WIKIDATA_SPARQL", "https://query.wikidata.org/sparql")
+ALBUM_TYPES = {"Q482994": "album", "Q208569": "album", "Q209939": "album"}  # album, studio album, live album
+TOUR_TYPES = {"Q1573906": "tour"}                                          # concert tour
+# a band's albums and tours with an English Wikipedia article, starting from
+# the band (the class hierarchy walk, P279*, times out)
+WORKS_QUERY = """SELECT ?item ?t ?date ?start ?links ?article WHERE {
+  ?item wdt:P175 wd:%s .
+  VALUES ?t { %s }
+  ?item wdt:P31 ?t .
+  OPTIONAL { ?item wdt:P577 ?date }
+  OPTIONAL { ?item wdt:P580 ?start }
+  ?item wikibase:sitelinks ?links .
+  ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> .
+}"""
 NOT_WIKIPEDIAS = {"commonswiki", "specieswiki", "metawiki", "wikidatawiki", "mediawikiwiki", "sourceswiki"}
 DEFAULT_UA = "RockFamilyTreeGen/2.0 ( https://github.com/BriScanlon/rock-family-trees )"
 
@@ -91,3 +105,31 @@ class WikipediaClient:
         if not parse or "error" in data:
             return None
         return {"title": parse.get("title", title), "text": parse.get("wikitext") or "", "revision": parse.get("revid")}
+
+    def works(self, wikidata_id):
+        """A band's albums and tours with an English Wikipedia article, most
+        written-about first: [{"wikidata", "kind", "title", "date", "sitelinks"}].
+        Where the band's events are told: the Montreux fire in Machine Head's
+        article, Rock in Rio in the World Slavery Tour's."""
+        if not wikidata_id:
+            return []
+        from urllib.parse import unquote
+        types = " ".join(f"wd:{q}" for q in {**ALBUM_TYPES, **TOUR_TYPES})
+        with _rate_lock:
+            wait = self.min_interval - (time.monotonic() - _last_call[0])
+            if wait > 0:
+                time.sleep(wait)
+            _last_call[0] = time.monotonic()
+        resp = self.session.get(WIKIDATA_SPARQL, params={"query": WORKS_QUERY % (wikidata_id, types), "format": "json"},
+                                timeout=60)
+        resp.raise_for_status()
+        out = {}
+        for b in resp.json().get("results", {}).get("bindings", []):
+            q = b["item"]["value"].rsplit("/", 1)[-1]
+            kind = {**ALBUM_TYPES, **TOUR_TYPES}.get(b["t"]["value"].rsplit("/", 1)[-1])
+            title = unquote(b["article"]["value"].rsplit("/", 1)[-1]).replace("_", " ")
+            date = (b.get("date") or b.get("start") or {}).get("value", "")[:10]
+            links = int(b["links"]["value"])
+            if q not in out or (date and date < (out[q]["date"] or "9999")):  # an album's earliest release
+                out[q] = {"wikidata": q, "kind": kind, "title": title, "date": date or None, "sitelinks": links}
+        return sorted(out.values(), key=lambda w: (-w["sitelinks"], w["title"]))

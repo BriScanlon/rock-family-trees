@@ -135,7 +135,7 @@ def _backed(source, article_norm):
         len(p) >= 12 and p.strip(" .,;") in article_norm for p in pieces)
 
 
-def check(notes, article_text):
+def check(notes, article_text, max_chars=MAX_NOTE_CHARS):
     """Keep only notes that are backed by the article, in our own words,
     short enough and dated. Returns (kept, dropped with reasons)."""
     article_norm = _norm(article_text)
@@ -143,7 +143,7 @@ def check(notes, article_text):
     kept, dropped = [], []
     for n in notes:
         reason = None
-        if len(n.get("text", "")) > MAX_NOTE_CHARS:
+        if len(n.get("text", "")) > max_chars:
             reason = "too long"
         elif _year(n.get("date")) is None:
             reason = "no date"

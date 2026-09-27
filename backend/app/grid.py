@@ -27,6 +27,9 @@ from app.narrative import lineup_for
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
 CAREERS = 3             # a band's longest-serving members whose other bands (off this poster) are told
+EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
+EVENT_PAD = 10          # margin inside an event block's cells
+EVENT_REACH = 4         # an event in another row sits within this many columns of its line-up
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
@@ -112,6 +115,7 @@ def coverage(layout):
     key) covered by line-ups: how full the page is."""
     area = (layout["width"] - 2 * MARGIN) * (layout["footer_y"] - 30 - TITLE_H)
     ink = sum(b["w"] * b["h"] for b in layout["boxes"])
+    ink += sum(e["w"] * e["h"] for e in layout.get("events", []))
     return ink / area if area > 0 else 0.0
 
 
@@ -527,6 +531,7 @@ class GridLayout(Cartographer):
             boxes.append(b)
 
         trunks, edges = self._route(placed, x0, row_y)
+        events = self._place_events(boxes, trunks, edges, x0, row_y, width, height, self.max_rows or used_rows)
         years = []
         for t in range(used_rows):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
@@ -540,7 +545,7 @@ class GridLayout(Cartographer):
             "years": years,
             "boxes": [{k: v for k, v in b.items() if k not in ("lineup", "cols")} | {"cols": dict(b["cols"])}
                       for b in boxes],
-            "trunks": trunks, "edges": edges,
+            "trunks": trunks, "edges": edges, "events": events,
             "footer_y": height - FOOTER_H + 30,
             "grid": {"cols": self.max_cols or used_cols, "rows": self.max_rows or used_rows,
                      "used_cols": used_cols, "used_rows": used_rows, "unit": unit, "row_h": pitch},
@@ -559,6 +564,122 @@ class GridLayout(Cartographer):
         return W, H
 
     # ------------------------------------------------------------------
+    def _free_cells(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """The grid cells (row, half-member column) no line-up or line passes
+        through: where an event can go."""
+        step = self.unit * self.hs
+        c_lo = -int((x0 - MARGIN) // step)
+        c_hi = int((width - MARGIN - x0) // step)
+        rows = [t for t in range(n_rows) if row_y(t + 1) <= height - FOOTER_H + 1]
+        # the blocks themselves, not the width their band reserves (a band's
+        # narrower line-ups leave room beside them), and every line's path
+        blocks = set()
+        for b in boxes:
+            for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
+                blocks.add((b["row"], c))
+        busy = set(blocks)
+        for line in list(trunks) + list(edges):
+            pts = line["points"]
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                lx, hx, ly, hy = min(ax, bx) - 6, max(ax, bx) + 6, min(ay, by) - 6, max(ay, by) + 6
+                for t in rows:
+                    if not (ly < row_y(t + 1) and row_y(t) < hy):
+                        continue
+                    for c in range(c_lo, c_hi):
+                        if lx < self._col_x(c + 1) and self._col_x(c) < hx:
+                            busy.add((t, c))
+        free = {(t, c) for t in rows for c in range(c_lo, c_hi) if (t, c) not in busy}
+        return free, blocks, rows, c_lo, c_hi
+
+    def _place_events(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """Each event (app/events.py) its own small block in free cells beside
+        the line-up it happened to, most significant first, tied to it with a
+        dotted line: part of the band's history on the page, and it fills the
+        gaps (the user's idea). In the line-up's own row where there's room
+        (the tie runs along the row), else a row whose years hold the event,
+        close by. An event already told in the band's notes, or with no room,
+        is left out."""
+        from app.events import same_story
+        from app.refiner import MONTHS
+        free, blocks, rows, c_lo, c_hi = self._free_cells(boxes, trunks, edges, x0, row_y, width, height, n_rows)
+        by_id = {b["id"]: b for b in boxes}
+        starts = {}
+        for b in boxes:
+            starts[b["row"]] = min(starts.get(b["row"], 1e9), b["start"])
+        era = lambda t: (starts.get(t, 1e9), min((s for r, s in starts.items() if r > t), default=1e9))
+        pending = sorted(((e, band) for band in self.tree.bands.values() for e in band.events),
+                         key=lambda eb: (-eb[0].get("significance", 1), -eb[0].get("sitelinks", 0), eb[0]["year"]))
+        told = {band.id: [s["text"] for s in band.stories] for band in self.tree.bands.values()}
+        for b in boxes:
+            told.setdefault(b["band_id"], []).append(b["notes_text"])
+        placed = []
+        for e, band in pending:
+            lu = lineup_for(band.lineups, e["year"])
+            box = by_id.get(f"{band.id}#{lu.number}") if lu else None
+            if box is None or same_story(e["text"], told[band.id]):
+                continue
+            when = e.get("date") or ""
+            label = (f"{MONTHS[int(when[5:7]) - 1]} {when[:4]}" if len(when) >= 7 and when[5:7].isdigit()
+                     else when[:4]).upper()
+            heading = f"{e['subject'].upper()} · {label}" if e.get("subject") else label
+            spot = self._event_spot(e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading)
+            if spot is not None and spot[0] != box["row"]:  # no tie along the row: say whose it is
+                heading = f"{band.name.upper()} · {heading}"
+                spot = self._event_spot(e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading)
+            if spot is None:
+                continue
+            (t, c, w, lines, tie_cells) = spot
+            for k in range(c, c + w):
+                free.discard((t, k))
+            blocks.update((t, k) for k in range(c, c + w))  # a later tie mustn't cross this block
+            x, y = self._col_x(c) + EVENT_PAD, row_y(t) + EVENT_PAD
+            ew = self._col_x(c + w) - self._col_x(c) - 2 * EVENT_PAD
+            eh = NOTE_LINE * (len(lines) + 1) + 2 * EVENT_PAD
+            mid = box["y"] + self.title_h / 2
+            tie = None
+            if t == box["row"]:  # along the row, from the line-up's edge to the block's
+                tie = ([(box["x"] + box["w"] + 4, mid), (x - EVENT_PAD / 2, mid)] if c >= box["lane"]
+                       else [(box["x"] - 4, mid), (x + ew + EVENT_PAD / 2, mid)])
+            placed.append({"band_id": band.id, "lineup": box["id"], "year": e["year"], "x": x - EVENT_PAD / 2,
+                           "y": y - EVENT_PAD / 2, "w": ew + EVENT_PAD, "h": eh, "heading": heading, "lines": lines,
+                           "significance": e.get("significance", 1), "tie": tie})
+            told[band.id].append(e["text"])
+        return placed
+
+    def _event_spot(self, e, box, free, blocks, rows, c_lo, c_hi, row_y, era, heading):
+        """(row, column, width, lines, cells the tie crosses) for an event, or None."""
+        bl, br = box["lane"], box["lane"] + 2 * box["span"] + 1
+        home = box["row"]
+        best = None
+        for t in rows:
+            lo, hi = era(t)
+            if t != home and not (lo <= e["year"] < hi):
+                continue
+            room = row_y(t + 1) - row_y(t) - 2 * EVENT_PAD
+            for w in EVENT_WIDTHS:
+                text_w = self._col_x(w) - self._col_x(0) - 2 * EVENT_PAD
+                lines = wrap(e["text"], HAND, NOTE_SIZE, text_w)
+                if NOTE_LINE * (len(lines) + 1) > room or text_width(heading, HAND, DATE_SIZE) > text_w:
+                    continue
+                for c in range(c_lo, c_hi - w + 1):
+                    if not all((t, k) in free for k in range(c, c + w)):
+                        continue
+                    if t == home:
+                        between = range(br, c) if c >= br else range(c + w, bl)
+                        if any((t, k) in blocks for k in between):  # the tie may cross lines, not blocks
+                            continue
+                        gap, tie_cells = len(between), [(t, k) for k in between]
+                    else:
+                        gap = max(0, c - br, bl - (c + w))
+                        if gap > EVENT_REACH:
+                            continue
+                        gap, tie_cells = gap + 20 + 5 * abs(t - home), []
+                    score = (gap, w)
+                    if best is None or score < best[0]:
+                        best = (score, (t, c, w, lines, tie_cells))
+                break  # the narrowest width that holds the text
+        return best[1] if best else None
+
     def _info_notes(self):
         """Info notes, each attached to the band and the time it belongs to
         (the user's instruction: part of the layout, never a list apart):
