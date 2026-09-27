@@ -277,3 +277,27 @@ def test_someone_who_stays_on_is_not_listed_as_brief():
     _, notes = GridLayout(tree)._annotations(tree.bands["x"], folded)
     assert "Pat Smear rejoined in 2010." in notes, notes
     assert notes[-1] == "Briefly also: Cy Cole (keyboards).", notes
+
+
+def test_renamings_and_unknown_dates_are_told():
+    from tests.test_refiner import _rainbow_like
+    tree, _ = _rainbow_like()
+    L = Cartographer(tree, paper="auto").layout()
+    notes = {b["id"]: " ".join(b["notes"]) for b in L["boxes"]}
+    assert "Renamed The Maze in 1967." in " ".join(v for k, v in notes.items() if k.startswith("mi5#"))
+    assert "Also, dates unknown: David Stone." in notes["rb#1"]
+
+
+def test_a_briefly_also_list_is_kept_short():
+    from tests.helpers import band, person
+    from app.grid import BRIEF_NAMES, GridLayout
+    from app.refiner import Lineup, LineupMember
+    x = band("x", "Band X", "1980", None, [("a", "Ann Able", "1980", None, ["lead vocals"])] +
+             [(f"p{i}", f"Player {i}", "1984", "1985", ["guitar"]) for i in range(9)])
+    records = {"x": x, **{m["person_id"]: person(m["person_id"], m["person_name"], [x]) for m in x["memberships"]}}
+    tree = Refiner(today=2026.5).build({"root_id": "x", "root_name": "Band X", "root_bands": ["x"],
+                                        "band_levels": {"x": 0}, "records": records})
+    folded = Lineup(number=1, start=1980.0, end=1990.0, start_label="1980", end_label="1990",
+                    members=[LineupMember(person_id="a", name="Ann Able", roles=["vocals"])])
+    _, notes = GridLayout(tree)._annotations(tree.bands["x"], folded)
+    assert notes[-1].count("Player") == BRIEF_NAMES and notes[-1].endswith(f"and {9 - BRIEF_NAMES} others.")

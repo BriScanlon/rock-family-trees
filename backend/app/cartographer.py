@@ -49,6 +49,8 @@ TRACK_SPACING = 7
 MAX_STRETCH = 1.8     # most the rows may be spread to fill the sheet
 STAGGER = 6           # separation of parallel horizontal runs leaving/entering a line-up
 
+RENAME_SHARE = 0.6     # a band that starts as another ends, with this share of its people, is a renaming
+RENAME_YEARS = 1.5
 MIN_PRINT_PT = 6.5     # smallest comfortable printed text size
 
 PAPER_MM = {"A0": (841, 1189), "A1": (594, 841), "A2": (420, 594), "A3": (297, 420), "A4": (210, 297)}
@@ -325,13 +327,31 @@ class Cartographer:
             n = lu.merged
             notes.insert(0, f"Simplified to fit: {n} brief line-up{'s' if n > 1 else ''} folded in here.")
         if band_over:
-            if nxt is not None:
+            renamed = self._renamed_as(band, lu) if nxt is None else None
+            if renamed is not None:
+                # MusicBrainz often files a change of name as a new band
+                notes = [n for n in notes if not n.endswith(f"{renamed.name}.")]
+                notes.insert(0, f"Renamed {renamed.name} in {_long_date(lu.end_label)}.")
+            elif nxt is not None:
                 notes.insert(0, f"Split in {_long_date(lu.end_label)}; re-formed {_long_date(nxt.start_label)}.")
             elif band.ended:
                 notes.insert(0, f"Split in {_long_date(lu.end_label)}.")
             else:
                 notes.insert(0, "Still going.")
         return notes
+
+    def _renamed_as(self, band, lu):
+        """The band this last line-up became under another name: one that starts
+        as it ends (within RENAME_YEARS), with mostly the same people."""
+        mine = {m.person_id for m in lu.members}
+        for other in self.tree.bands.values():
+            if other.id == band.id or not other.lineups:
+                continue
+            first = {m.person_id for m in other.lineups[0].members}
+            if (mine and len(mine & first) / len(mine | first) >= RENAME_SHARE
+                    and 0 <= other.start - lu.start and abs(other.start - lu.end) <= RENAME_YEARS):
+                return other
+        return None
 
     def _next_band(self, person_id, band, lu):
         for b, l in self.appearances.get(person_id, []):

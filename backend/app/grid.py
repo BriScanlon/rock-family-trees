@@ -25,6 +25,7 @@ from app.fonts import HAND, text_width, wrap
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
+BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
 LINE_STEP = 5           # separation of parallel lines in a channel or gap
@@ -152,6 +153,9 @@ class GridLayout(Cartographer):
             told = {m.name for m in lu.members if any(k.startswith(("then", "left")) for k in marks.get(m.person_id, []))}
             said = [n for n in self._notes(band, lu, nxt) if not n.startswith("Simplified to fit")
                     and not any(n.startswith(f"{who} left in ") for who in told)]
+            if i == 0 and band.undated:  # left out of the line-ups: MusicBrainz has no dates
+                extra = extra + [f"Also, dates unknown: {', '.join(band.undated[:BRIEF_NAMES])}"
+                                 f"{f' and {len(band.undated) - BRIEF_NAMES} others' if len(band.undated) > BRIEF_NAMES else ''}."]
             notes = " ".join((said + extra)[:MAX_NOTES])
             widest = span + NOTE_WIDEN
             while span < widest and len(wrap(notes, HAND, NOTE_SIZE, span * slot - 8)) > NOTE_LINES:
@@ -221,6 +225,8 @@ class GridLayout(Cartographer):
             if links[pid] or dates:
                 marks[pid] = (links[pid] + dates)[:ANNOT_LINES]
         extra = list(dict.fromkeys(extra))  # one mention each, however many stints
+        if len(extra) > BRIEF_NAMES:  # a wall of names says less than a count
+            extra = extra[:BRIEF_NAMES] + [f"and {len(extra) - BRIEF_NAMES} others"]
         notes = list(dict.fromkeys(joins)) + ([f"Briefly also: {', '.join(extra)}."] if extra else [])
         return marks, notes
 

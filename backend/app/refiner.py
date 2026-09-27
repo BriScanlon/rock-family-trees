@@ -86,7 +86,8 @@ FOUNDER_YEARS = 10   # a founder's minimum tenure in the band they founded
 MOVE_YEARS = 2       # left one band and joined the other within this: a direct move
 MOVE_BONUS = 2.0
 SIDE_PROJECT = 0.3
-UNDATED_YEARS = 0.25  # what an undated membership counts for when ranking bands
+UNDATED_YEARS = 0.25
+MOSTLY_DATED = 0.5    # leave undated members out of the line-ups only when at least this share are dated  # what an undated membership counts for when ranking bands
 
 
 class Stint(BaseModel):
@@ -127,6 +128,7 @@ class Band(BaseModel):
     ended: bool = True
     stints: List[Stint] = []
     lineups: List[Lineup] = []
+    undated: List[str] = []  # members MusicBrainz gives no dates for, left out of the line-ups
 
 
 class Person(BaseModel):
@@ -161,6 +163,14 @@ class Refiner:
             died, died_label = parse_date(rec.get("end")) if rec.get("ended") else (None, None)
             people[rec["mbid"]] = Person(id=rec["mbid"], name=rec["name"], died=died, died_label=died_label)
 
+        # A musician's instrument where MusicBrainz leaves it off one membership
+        # but gives it on another (Dio: none in Rainbow, "lead vocals" in Black Sabbath)
+        self.known_roles = defaultdict(Counter)
+        for rec in records.values():
+            for m in rec.get("memberships", []):
+                for r in role_words(m.get("attributes"))[:1]:
+                    self.known_roles[m["person_id"]][r] += 1
+
         bands = {}
         for band_id, level in levels.items():
             rec = records.get(band_id)
@@ -182,6 +192,10 @@ class Refiner:
             people=people,
         )
 
+    def _role_for(self, person_id):
+        known = getattr(self, "known_roles", {}).get(person_id)
+        return [known.most_common(1)[0][0]] if known else []
+
     # -- bands -----------------------------------------------------------
     def _build_band(self, rec, level):
         raw = [m for m in rec["memberships"] if m["band_id"] == rec["mbid"]]
@@ -200,18 +214,37 @@ class Refiner:
                 return None
             b_start = min(starts)
         ended = bool(rec.get("ended")) or b_end is not None
+        # MusicBrainz leaves many long-gone bands without an end date (MI5, 1966-67):
+        # only call a band current if someone's dated membership is still open
+        still_open = any(s is not None and e is None and not m.get("ended") for m, s, sl, e, el in parsed)
+        if not ended and not still_open:
+            ended = True
         if b_end is None:
             if ended:
-                ends = [p[3] for p in parsed if p[3] is not None]
-                b_end = max(ends) if ends else b_start + 1
+                known = [t for p in parsed for t in (p[1], p[3]) if t is not None]
+                b_end = max(known) if known else b_start + 1
             else:
                 b_end = self.today
         if b_end <= b_start:
             b_end = b_start + 0.5
 
         labels = {b_start: b_start_label or format_time(b_start), b_end: b_end_label or format_time(b_end)}
+        # An undated membership would span the band's whole life: David Stone
+        # (Rainbow keyboards 1977-78) turned up in every Rainbow line-up and hid
+        # its 1984-93 break. Where other members are dated, leave the undated
+        # ones out of the line-ups (and say so) - unless they founded the band
+        # or it's named after them (Ian Gillan in Gillan).
+        # Only when they're the exception: where most members are undated (MI5:
+        # only Ian Paice has dates) the undated ones are the band, so keep them.
+        dated_share = sum(s is not None or e is not None for m, s, sl, e, el in parsed) / max(1, len(parsed))
+        any_dated = dated_share >= MOSTLY_DATED
+        undated = []
         stints = []
         for m, s, sl, e, el in parsed:
+            if any_dated and s is None and e is None and not _anchors(m, rec["name"]):
+                role = role_words(m.get("attributes"))[:1] or list(self._role_for(m["person_id"]))
+                undated.append(f"{m['person_name']}{f' ({role[0]})' if role else ''}")
+                continue
             if s is None:
                 s = b_start
             if e is None:
@@ -226,12 +259,13 @@ class Refiner:
                     labels[t] = lab
             stints.append(Stint(
                 person_id=m["person_id"], name=m["person_name"] or "?", start=s, end=e,
-                roles=role_words(m.get("attributes")), start_label=sl, end_label=el,
+                roles=role_words(m.get("attributes")) or self._role_for(m["person_id"]),
+                start_label=sl, end_label=el,
                 original="original" in [(a or "").lower() for a in m.get("attributes") or []],
             ))
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
-                    ended=ended, stints=stints)
+                    ended=ended, stints=stints, undated=list(dict.fromkeys(undated)))
         band.lineups = self._lineups(band, labels)
         return band
 
@@ -359,6 +393,17 @@ class Refiner:
                 chosen[b.id] = b
                 add(b)
         return chosen
+
+
+def _anchors(membership, band_name):
+    """A member whose undated membership may still span the band's life: a
+    founder, or the one the band is named after."""
+    if "original" in [(a or "").lower() for a in membership.get("attributes") or []]:
+        return True
+    name = (membership.get("person_name") or "").lower()
+    surname = name.split()[-1] if name.split() else ""
+    band = band_name.lower()
+    return bool(name) and (name in band or (len(surname) > 3 and surname in band.split()))
 
 
 def default_title(root_name):
