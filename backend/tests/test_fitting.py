@@ -143,3 +143,27 @@ def test_the_band_a_founder_came_from_is_kept_despite_bad_dates():
                "band_levels": {"ff": 0, "nv": 1, "cm": 1, "vd": 1}, "records": records}
     order = [b.name for b in Refiner(today=2026.5).build(harvest).bands.values()]
     assert order[:2] == ["Foo Fighters", "Nirvana"], order
+
+
+def test_standing_breaks_ties_but_lineage_beats_fame():
+    # standing = how many Wikipedias cover a band (Wikidata sitelinks), damped
+    from tests.helpers import band, person
+    from app.refiner import Refiner
+    root = band("r", "Root", "1990", None, [
+        ("a", "Ann", "1990", None, ["lead vocals", "original"]),
+        ("b", "Bob", "1990", None, ["guitar", "original"])])
+    famous = band("f", "Zenith", "1985", "1989", [("a", "Ann", "1985", "1989", ["lead vocals"])])
+    obscure = band("o", "Acorn", "1985", "1989", [("b", "Bob", "1985", "1989", ["guitar"])])
+    fleeting = band("g", "Supergroup", "2010", "2011", [("a", "Ann", "2010", "2010-03", ["lead vocals"])])
+    famous["sitelinks"], obscure["sitelinks"], fleeting["sitelinks"], root["sitelinks"] = 100, 10, 120, 30
+    bands = [root, famous, obscure, fleeting]
+    records = {b["mbid"]: b for b in bands} | {p: person(p, n, bands) for p, n in (("a", "Ann"), ("b", "Bob"))}
+    harvest = {"root_id": "r", "root_name": "Root", "root_bands": ["r"],
+               "band_levels": {"r": 0, "f": 1, "o": 1, "g": 1}, "records": records}
+    order = [b.name for b in Refiner(today=2026.5).build(harvest).bands.values()]
+    assert order.index("Zenith") < order.index("Acorn")        # same lineage, better known first (names say otherwise)
+    assert order.index("Acorn") < order.index("Supergroup")    # lineage beats a famous side project
+    for rec in bands:
+        rec.pop("sitelinks")
+    order = [b.name for b in Refiner(today=2026.5).build(harvest).bands.values()]
+    assert set(order[1:3]) == {"Zenith", "Acorn"}              # unknown standing: neutral

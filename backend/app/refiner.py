@@ -87,6 +87,8 @@ MOVE_YEARS = 2       # left one band and joined the other within this: a direct 
 MOVE_BONUS = 2.0
 SIDE_PROJECT = 0.3
 UNDATED_YEARS = 0.25
+STANDING_POWER = 0.5  # damping of a band's standing (Wikipedias covering it) relative to the family's median
+STANDING_MIN, STANDING_MAX = 0.5, 2.0
 MOSTLY_DATED = 0.5    # leave undated members out of the line-ups only when at least this share are dated  # what an undated membership counts for when ranking bands
 
 
@@ -132,6 +134,7 @@ class Band(BaseModel):
     stories: List[dict] = []  # dated notes written from Wikipedia (app/narrative.py)
     albums: List[str] = []  # studio albums, "1972 Machine Head" (MusicBrainz)
     genres: List[str] = []
+    standing: Optional[int] = None  # Wikipedias with an article on the band (Wikidata sitelinks)
 
 
 class Person(BaseModel):
@@ -279,7 +282,7 @@ class Refiner:
 
         band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
                     ended=ended, stints=stints, undated=list(dict.fromkeys(undated)),
-                    genres=list(rec.get("genres") or [])[:3])
+                    genres=list(rec.get("genres") or [])[:3], standing=rec.get("sitelinks"))
         band.lineups = self._lineups(band, labels)
         return band
 
@@ -396,9 +399,21 @@ class Refiner:
                 total += link * (MOVE_BONUS if direct else SIDE_PROJECT if alongside else 1.0)
             return total
 
+        # A band's standing (how many Wikipedias cover it) scales its link, damped
+        # so lineage still beats fame: Nirvana (106) over No Use for a Name (22)
+        # for the Foo Fighters, but Scream (17), which fed straight into them,
+        # isn't swamped. Relative to the family's median; unknown is neutral.
+        known = sorted(b.standing for b in bands.values() if b.standing is not None)
+        median = known[len(known) // 2] if known else None
+
+        def standing(band):
+            if band.standing is None or median is None:
+                return 1.0
+            return min(STANDING_MAX, max(STANDING_MIN, ((band.standing + 1) / (median + 1)) ** STANDING_POWER))
+
         rest = [b for b in bands.values() if b.id not in chosen]
         for level in sorted({b.level for b in rest}):
-            candidates = [(strength(b), b) for b in rest if b.level == level]
+            candidates = [(strength(b) * standing(b), b) for b in rest if b.level == level]
             candidates = [c for c in candidates if c[0] > 0]
             candidates.sort(key=lambda c: (-c[0], c[1].start, c[1].name))
             for _, b in candidates:

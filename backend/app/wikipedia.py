@@ -16,6 +16,7 @@ import requests
 
 WIKIDATA_API = os.getenv("WIKIDATA_API", "https://www.wikidata.org/w/api.php")
 WIKIPEDIA_API = os.getenv("WIKIPEDIA_API", "https://en.wikipedia.org/w/api.php")
+NOT_WIKIPEDIAS = {"commonswiki", "specieswiki", "metawiki", "wikidatawiki", "mediawikiwiki", "sourceswiki"}
 DEFAULT_UA = "RockFamilyTreeGen/2.0 ( https://github.com/BriScanlon/rock-family-trees )"
 
 _rate_lock = threading.Lock()
@@ -39,6 +40,19 @@ class WikipediaClient:
         resp = self.session.get(url, params=dict(params, format="json", formatversion=2), timeout=30)
         resp.raise_for_status()
         return resp.json()
+
+    def sitelinks(self, wikidata_ids):
+        """How many Wikipedias (language editions) have an article on each item:
+        a band's standing in the world - Nirvana 106, No Use for a Name 22."""
+        counts = {}
+        ids = [q for q in dict.fromkeys(wikidata_ids) if q]
+        for i in range(0, len(ids), 50):  # the API takes 50 at a time
+            data = self._get(WIKIDATA_API, {"action": "wbgetentities", "ids": "|".join(ids[i:i + 50]),
+                                            "props": "sitelinks"})
+            for q, entity in (data.get("entities") or {}).items():
+                links = entity.get("sitelinks") or {}
+                counts[q] = sum(1 for site in links if site.endswith("wiki") and site not in NOT_WIKIPEDIAS)
+        return counts
 
     def title_for(self, wikidata_id):
         """The English Wikipedia article for a Wikidata item, or None."""
