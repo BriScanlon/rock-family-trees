@@ -135,15 +135,59 @@ def _backed(source, article_norm):
         len(p) >= 12 and p.strip(" .,;") in article_norm for p in pieces)
 
 
-def check(notes, article_text):
+LOCATE_SHARE = 0.75  # a misquoted source is the article sentence holding this share of its words
+
+
+def sentences(text):
+    return [s for s in re.split(r"(?<=[.!?])\s+|\n+", text) if len(s.split()) >= 4]
+
+
+def locate(source, article_text):
+    """The article's own sentence(s) a misquoted source came from: for each
+    piece of the source, the sentence holding most of its words (at least
+    LOCATE_SHARE of them), else None. The model found the right passage but
+    reworded it ("Montreux Casino burned during Frank Zappa's show")."""
+    sents = sentences(article_text)
+    found = []
+    for piece in [p for p in re.split(r"\.\.\.|…", source) if p.strip()]:
+        words = set(_words(piece))
+        if len(words) < 5:
+            return None
+        best = max(sents, key=lambda s: len(words & set(_words(s))), default=None)
+        if best is None or len(words & set(_words(best))) / len(words) < LOCATE_SHARE:
+            return None
+        found.append(best.strip())
+    return " ... ".join(dict.fromkeys(found)) or None
+
+
+def context(source, article_text):
+    """The source with the sentences either side: a fact from the sentence
+    after the one quoted (California Jam's crowd) is still the article's."""
+    sents = sentences(article_text)
+    norm = [_norm(s) for s in sents]
+    keep = set()
+    for piece in [_norm(p).strip(" .,;") for p in re.split(r"\.\.\.|…", source) if p.strip()]:
+        for i, s in enumerate(norm):
+            if piece and (piece in s or s.strip(" .") in piece):
+                keep |= {i - 1, i, i + 1}
+    return " ".join(sents[i] for i in sorted(keep) if 0 <= i < len(sents)) or source
+
+
+def check(notes, article_text, max_chars=MAX_NOTE_CHARS, repair=False):
     """Keep only notes that are backed by the article, in our own words,
-    short enough and dated. Returns (kept, dropped with reasons)."""
+    short enough and dated. Returns (kept, dropped with reasons). With
+    `repair`, a misquoted source is replaced by the article sentence it
+    came from (and the note still has to pass everything else)."""
     article_norm = _norm(article_text)
     article_words = _words(article_text)
     kept, dropped = [], []
     for n in notes:
         reason = None
-        if len(n.get("text", "")) > MAX_NOTE_CHARS:
+        if repair and not _backed(n.get("source", ""), article_norm):
+            real = locate(n.get("source", ""), article_text)
+            if real:
+                n = dict(n, source=real)
+        if len(n.get("text", "")) > max_chars:
             reason = "too long"
         elif _year(n.get("date")) is None:
             reason = "no date"

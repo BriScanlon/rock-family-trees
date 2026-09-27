@@ -26,7 +26,17 @@ from app.narrative import lineup_for
 
 NOTE_LINES = 4          # most lines of notes in a block, under the band name
 ANNOT_LINES = 2         # annotations under a member: "joined Mar 97", "then T. Hawkins"
-CAREERS = 3             # a band's longest-serving members whose other bands (off this poster) are told
+CAREERS = 12            # a band's longest-serving members whose other bands (off this poster) are told
+EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
+EVENT_PAD = 10          # margin inside an event block's cells
+NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
+MAX_WIDEN = 1.8         # a block may stretch to this many times its width into free columns beside it
+FLOAT_SCALE = 1.4       # floating notes print larger than a block's: Frame lettered his asides big
+TIME_COLUMNS = False    # time runs down each band and along each move; not every column (the user's choice: a fuller page)
+DRIFT = 4               # half-member columns a line-up may shift from the one before it (Frame's jogs)
+DRIFT_WEIGHT = 0.15     # cost per column of shift: straight lines unless drifting packs better
+SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
+                        # its own pace (the user chose this over rows level across the page)
 BRIEF_NAMES = 4         # most names in a "Briefly also" list
 NOTE_WIDEN = 2          # a block may be widened by this many members to fit its notes
 CHANNEL = 30            # the band under each row where lines run across the page
@@ -35,10 +45,10 @@ CHANNEL_STEP = 4        # and in a channel, where more lines meet (seven tracks 
 PACK_REPAIRS = 40       # rounds of re-placing to turn upward moves downwards
 MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the sheet's edges
 MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
-MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
+MAX_SPREAD = 0.0         # rows are not spread apart to reach the bottom: spare height is left for notes, not gaps
 HINT_WEIGHT = 0.2       # pull (per column) towards a band's preferred column, when the optimiser gives one
-ERA_WEIGHT = 1.5        # pull towards the row where line-ups of the same date sit
-TOP_WEIGHT = 0.3        # pull towards the top: keep the tree compact
+ERA_WEIGHT = 0.5        # pull towards the row where line-ups of the same date sit
+TOP_WEIGHT = 1.0        # pull towards the top: keep the tree compact
 NEAR_WEIGHT = 0.08      # pull (per column) towards bands sharing musicians
 
 
@@ -112,6 +122,7 @@ def coverage(layout):
     key) covered by line-ups: how full the page is."""
     area = (layout["width"] - 2 * MARGIN) * (layout["footer_y"] - 30 - TITLE_H)
     ink = sum(b["w"] * b["h"] for b in layout["boxes"])
+    ink += sum(e["w"] * e["h"] for e in layout.get("events", []))
     return ink / area if area > 0 else 0.0
 
 
@@ -257,26 +268,33 @@ class GridLayout(Cartographer):
             info = [n["text"] for n in self.info.get(band.id, []) if lineup_for(band.lineups, n["year"]) is lu]
             albums = _albums_of(band, lu)  # this line-up's albums, told in its block as Frame did
 
-            def compose(k):
-                return " ".join((told_here + ([_recorded(albums, k)] if albums else []) + said + info + extra)[:MAX_NOTES])
+            recorded = _recorded(albums)
+            # most telling first; what the block can't hold whole floats beside it (_place_notes)
+            items = ([(t, "story", 4) for t in told_here] + ([(recorded, "albums", 3)] if recorded else [])
+                     + [(t, "told", 2) for t in said + extra]
+                     + [(t, "style" if t.startswith("Style:") else "career", 0 if t.startswith("Style:") else 1)
+                        for t in info])
 
             def too_long(text, n):
                 return len(wrap(text, HAND, NOTE_SIZE, n * slot - 8)) > NOTE_LINES
 
             widest = span + NOTE_WIDEN
-            while span < widest and too_long(compose(None), span):  # widen for the story and the albums
+            story = " ".join(t for t, kind, _ in items if kind in ("story", "albums"))
+            while span < widest and too_long(story, span):  # widen for the story and the albums
                 span += 1
-            shown = len(albums)
-            while shown > 1 and too_long(compose(shown), span):  # still short of room: "... and 3 more"
-                shown -= 1
-            recorded = _recorded(albums, shown)
-            notes = compose(shown)
+            shown, floating = [], []
+            for text, kind, priority in items:  # whole sentences only, never cut off with "..."
+                if not too_long(" ".join(shown + [text]), span):
+                    shown.append(text)
+                else:
+                    floating.append({"text": text, "kind": kind, "priority": priority})
+            notes = " ".join(shown)
             box = {"id": f"{band.id}#{lu.number}", "band_id": band.id, "band_name": band.name, "number": lu.number,
                    "start": lu.start, "end": lu.end, "after_gap": lu.after_gap, "ongoing": lu.ongoing,
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
                    "dates": dates, "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
                    "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu,
-                   "recorded": recorded}
+                   "recorded": recorded, "floating": floating, "items": items}
             self.boxes[box["id"]] = box
             self.box_order.append(box["id"])
             if i == 0 or lu.after_gap:
@@ -353,21 +371,23 @@ class GridLayout(Cartographer):
         upwards gives its target a lower minimum row and the page is placed
         again. None if it won't fit."""
         floors = {}
+        n_sub = None if n_rows is None else n_rows * SUB
         for _ in range(PACK_REPAIRS):
-            placed = self._pack_once(n_cols, n_rows, floors)
+            placed = self._pack_once(n_cols, n_sub, floors)
             if placed is None:
                 return None
-            upward = [(a, b) for _, a, b in self.moves if self._tier[b["id"]] <= self._tier[a["id"]]]
+            # a move goes down: the line-up it goes to starts below the bottom of the one it left
+            upward = [(a, b) for _, a, b in self.moves if self._tier[b["id"]] < self._tier[a["id"]] + SUB]
             if not upward:
                 return placed
             for a, b in upward:
-                floors[b["id"]] = max(floors.get(b["id"], 0), self._tier[a["id"]] + 1)
+                floors[b["id"]] = max(floors.get(b["id"], 0), self._tier[a["id"]] + SUB)
         return None
 
     def _pack_once(self, n_cols, n_rows, floors):
         units = self._units_cache
-        sky = [0] * n_cols
-        latest = [-math.inf] * n_cols  # the latest start drawn in each column
+        occ = defaultdict(list)  # column -> [(first sub-row, end, earliest start, latest start)] of what's there
+        band_end = {}            # band id -> the sub-row below its last line-up so far: a re-formed band goes below
         cell = {}
         tier, col0 = {}, {}
         placed = []
@@ -383,48 +403,87 @@ class GridLayout(Cartographer):
             lims = []
             for b in u["boxes"]:
                 # (moves into line-ups already placed can't be honoured here: _pack repairs them)
-                lims.append(max([tier[a["id"]] + 1 for a in into[b["id"]] if a["id"] in tier]
-                                + [floors.get(b["id"], 0)]))
+                lims.append(max([tier[a["id"]] + SUB for a in into[b["id"]] if a["id"] in tier]
+                                + [floors.get(b["id"], 0), band_end.get(u["band"].id, 0)]))
             era_rows = [self._era_row(eras, b["start"]) for b in u["boxes"]]
             links = [(c, self.linked.get((u["band"].id, bid), 0)) for bid, cs in cols_of.items()
                      for c in cs if bid != u["band"].id and self.linked.get((u["band"].id, bid))]
             own = cols_of.get(u["band"].id, [])
             best = None
-            first = u["boxes"][0]["start"]
-            for c0 in range(n_cols - w + 1):
-                if max(latest[c0:c0 + w]) > first:
-                    continue  # time runs down every column: nothing later above it
-                floor = max(sky[c0:c0 + w])
-                rows, r = [], floor - 1
-                for lo in lims:
-                    r = max(lo, r + 1)
-                    if n_rows is not None and r >= n_rows:
+            widths = [2 * b["span"] + 1 for b in u["boxes"]]  # each line-up its own width (a lone member is narrow)
+
+            def fits_at(cb, bw, r, when, keep=None):
+                """Room for a line-up dated `when` at sub-row r in columns cb..: nothing
+                there, nothing later above it or earlier below it (time runs down every
+                column), and `keep` - the drop from the line-up before - clear too."""
+                for c in range(cb, cb + bw):
+                    for r0, r1, smin, smax in occ[c]:
+                        if r0 < r + SUB and r < r1:
+                            return False
+                        if TIME_COLUMNS and ((r1 <= r and smax > when) or (r0 >= r + SUB and smin < when)):
+                            return False
+                for c, lo_r, hi_r in keep or []:
+                    if any(r0 < hi_r and lo_r < r1 for r0, r1, _, _ in occ[c]):
+                        return False
+                return True
+
+            for c0 in range(n_cols - widths[0] + 1):
+                rows, cols, r_prev = [], [], None
+                for i, (b, bw, lo) in enumerate(zip(u["boxes"], widths, lims)):
+                    # the first where the run starts; each after it straight below, or shifted a little
+                    options = [c0] if i == 0 else [cols[-1] + d for d in range(-DRIFT, DRIFT + 1)]
+                    lo_r = max([lo] + ([r_prev + SUB] if r_prev is not None else []))
+                    pick = None
+                    for cb in options:
+                        if cb < 0 or cb + bw > n_cols:
+                            continue
+                        # the first free spot from lo_r down: holes above others included
+                        starts = sorted({lo_r} | {r1 for c in range(cb, cb + bw) for _, r1, _, _ in occ[c] if r1 > lo_r})
+                        for r in starts:
+                            if n_rows is not None and r + SUB > n_rows:
+                                break
+                            keep = ([(c, r_prev + SUB, r) for c in range(cols[-1], cols[-1] + widths[i - 1])]
+                                    if i and r > r_prev + SUB else None)
+                            if fits_at(cb, bw, r, b["start"], keep):
+                                key = (r, abs(cb - cols[-1]) if cols else 0)
+                                if pick is None or key < pick[0]:
+                                    pick = (key, cb, r)
+                                break
+                    if pick is None:
                         rows = None
                         break
-                    rows.append(r)
+                    rows.append(pick[2])
+                    cols.append(pick[1])
+                    r_prev = pick[2]
                 if rows is None:
                     continue
+                drift = sum(abs(a - b) for a, b in zip(cols, cols[1:]))
                 era = sum(abs(r - e) for r, e in zip(rows, era_rows)) / len(rows)
                 near = sum(k * abs(c0 - c) for c, k in links) / max(1, sum(k for _, k in links))
                 near += 3 * min((abs(c0 - c) for c in own), default=0)  # a re-formed band returns to its columns
                 hint = self.hints.get(u["band"].id)
-                cost = ((rows[-1] - rows[0]) + self.top_w * rows[0] + self.era_w * era
-                        + self.near_w * near + 0.001 * ((n_cols - w - c0) if self.mirror else c0)
+                cost = ((rows[-1] - rows[0]) / SUB + self.top_w * rows[0] / SUB + self.era_w * era / SUB
+                        + self.near_w * near + DRIFT_WEIGHT * drift
+                        + 0.001 * ((n_cols - w - c0) if self.mirror else c0)
                         + (HINT_WEIGHT * abs(c0 - hint) if hint is not None else 0.0))
                 if best is None or cost < best[0]:
-                    best = (cost, c0, rows)
+                    best = (cost, c0, rows, cols)
             if best is None:
                 return None
-            _, c0, rows = best
-            for c in range(c0, c0 + w):
-                sky[c] = rows[-1] + 1
-                latest[c] = max(latest[c], u["boxes"][-1]["start"])
-                for t in range(rows[0], rows[-1] + 1):
-                    cell[(t, c)] = "gap" if c == c0 + w - 1 else u["band"].id
-            for b, r in zip(u["boxes"], rows):
-                tier[b["id"]], col0[b["id"]] = r, c0
+            _, c0, rows, cols = best
+            boxes_u = u["boxes"]
+            for i, (b, r, cb, bw) in enumerate(zip(boxes_u, rows, cols, widths)):
+                for c in range(cb, cb + bw):
+                    occ[c].append((r, r + SUB, b["start"], b["start"]))
+                    for t in range(r, r + SUB):
+                        cell[(t, c)] = "gap" if c == cb + bw - 1 else u["band"].id
+                if i + 1 < len(rows) and rows[i + 1] > r + SUB:  # the members' lines drop to the next line-up: keep clear
+                    for c in range(cb, cb + bw):
+                        occ[c].append((r + SUB, rows[i + 1], b["start"], boxes_u[i + 1]["start"]))
+                tier[b["id"]], col0[b["id"]] = r, cb
                 eras.append((b["start"], r))
                 placed.append(b)
+                band_end[u["band"].id] = max(band_end.get(u["band"].id, 0), r + SUB)
             cols_of[u["band"].id].append(c0)
         self._cells = cell
         self._tier, self._col0 = tier, col0
@@ -454,7 +513,7 @@ class GridLayout(Cartographer):
             if placed is None:
                 continue
             used_cols = max(self._col0[b["id"]] + 2 * b["span"] + 1 for b in placed)
-            used_rows = max(self._tier.values()) + 1
+            used_rows = math.ceil((max(self._tier.values()) + SUB) / SUB)
             w = 2 * MARGIN + used_cols * self.unit
             h = TITLE_H + used_rows * self.row_h + FOOTER_H
             area = min(max(w, h / 2 ** 0.5) * max(h, w * 2 ** 0.5), max(w, h * 2 ** 0.5) * max(h, w / 2 ** 0.5))
@@ -468,7 +527,7 @@ class GridLayout(Cartographer):
     def _geometry(self, placed):
         ls, slot, unit = self.ls, self.slot, self.unit
         used_cols = max(self._col0[b["id"]] + 2 * b["span"] for b in placed)
-        used_rows = max(self._tier.values()) + 1
+        used_rows = math.ceil((max(self._tier.values()) + SUB) / SUB)
         content_w = 2 * MARGIN + used_cols * unit
         content_h = TITLE_H + used_rows * self.row_h + FOOTER_H
         if self.max_cols is not None:  # the sheet itself, at the smallest readable size
@@ -492,14 +551,19 @@ class GridLayout(Cartographer):
         self.hs = min(MAX_HSPREAD, max(1.0, (width - 2 * MARGIN) / (used_cols * unit)))
         x0 = (width - used_cols * unit * self.hs) / 2
         self.x0 = x0
-        row_y = lambda t: TITLE_H + t * pitch
+        row_y = lambda t: TITLE_H + t * pitch / SUB  # t in sub-rows
         self.pitch = pitch
 
+        stretch = self._widen(placed, row_y, width)
         boxes = []
         for b in placed:
             t, c0 = self._tier[b["id"]], self._col0[b["id"]]
             x, y = self._col_x(c0), row_y(t)
             lu = b["lineup"]
+            k = stretch[b["id"]]
+            slot = self.slot * k  # members spread across the widened block
+            if k > 1:  # wider: it holds more of its notes, fewer float beside it
+                self._refit_notes(b, b["span"] * slot)
             members = []
             for m in lu.members[:MAX_MEMBERS]:
                 lines = _split_name(m.name.upper())
@@ -516,31 +580,31 @@ class GridLayout(Cartographer):
                                 "y_name": y_name, "lines": lines, "roles": roles, "bottom": bottom})
             members.sort(key=lambda m: m["col"])
             cxs = [m["cx"] for m in members] or [x + slot / 2]
-            notes = wrap(b["notes_text"], HAND, NOTE_SIZE, b["span"] * slot - 8)
-            if len(notes) > NOTE_LINES:
-                notes = notes[:NOTE_LINES]
-                notes[-1] = notes[-1].rstrip(" .,;") + "…"
+            notes = wrap(b["notes_text"], HAND, NOTE_SIZE, b["span"] * slot - 8)[:NOTE_LINES]
+            step = self.unit * self.hs
+            b.update({"c_lo": c0, "c_hi": c0 + math.ceil(b["span"] * slot / step)})  # columns it now covers
             b.update({"x": x, "y": y, "w": b["span"] * slot, "h": self.block_h, "footprint": self.block_h,
                       "lane": c0, "row": t, "bar_y": y + self.bar_dy, "bar": (min(x, min(cxs) - 12), max(cxs) + 12),
                       "members": members, "overflow": max(0, len(lu.members) - MAX_MEMBERS),
                       "notes": notes, "notes_x": x, "notes_y": y + self.title_h})
             boxes.append(b)
 
+        slot = self.slot
         trunks, edges = self._route(placed, x0, row_y)
+        events = self._place_notes(boxes, trunks, edges, x0, row_y, width, height, (self.max_rows or used_rows) * SUB)
         years = []
-        for t in range(used_rows):
+        for t in sorted(set(self._tier.values())):
             starts = [b["start"] for b in placed if self._tier[b["id"]] == t]
-            if starts:
-                years.append({"year": int(min(starts)), "y": row_y(t) + 4})
+            years.append({"year": int(min(starts)), "y": row_y(t) + 4})
         layout = {
             "width": width, "height": height, "paper": self.paper,
             "title": self.tree.title, "subtitle": self.subtitle, "lettering": self.ls, "timeline": False,
             "axis": {"left": MARGIN / 2, "right": width - MARGIN / 2, "top": TITLE_H - 20,
-                     "bottom": row_y(used_rows)},
+                     "bottom": row_y(used_rows * SUB)},
             "years": years,
             "boxes": [{k: v for k, v in b.items() if k not in ("lineup", "cols")} | {"cols": dict(b["cols"])}
                       for b in boxes],
-            "trunks": trunks, "edges": edges,
+            "trunks": trunks, "edges": edges, "events": events,
             "footer_y": height - FOOTER_H + 30,
             "grid": {"cols": self.max_cols or used_cols, "rows": self.max_rows or used_rows,
                      "used_cols": used_cols, "used_rows": used_rows, "unit": unit, "row_h": pitch},
@@ -549,6 +613,42 @@ class GridLayout(Cartographer):
                       **self._print_report(width, height)},
         }
         return layout
+
+    def _widen(self, placed, row_y, width):
+        """How far each block stretches into the free columns to its right:
+        {box id: factor}. Frame's blocks vary in width and fill the space;
+        a block stretches until the next block that shares any of its height
+        (keeping a column's gutter for lines), or the sheet's edge, at most
+        MAX_WIDEN. Blocks only grow rightwards, and each stops short of where
+        its neighbours start, so none can meet."""
+        step = self.unit * self.hs
+        ch = self.pitch - self.block_h
+        rects = {b["id"]: (self._col_x(self._col0[b["id"]]), row_y(self._tier[b["id"]]), b["span"] * self.slot, b["start"])
+                 for b in placed}
+        out = {}
+        for bid, (x, y, w, start) in rects.items():
+            limit = width - MARGIN
+            for oid, (ox, oy, ow, ostart) in rects.items():
+                if oid == bid or ox < x + w - 1:
+                    continue
+                beside = oy < y + self.block_h + ch and y < oy + self.block_h + ch
+                # time runs down every column: never reach over an earlier line-up below, or a later one above
+                out_of_time = (oy > y and ostart < start) or (oy < y and ostart > start)
+                if beside or out_of_time:
+                    limit = min(limit, ox - step)
+            out[bid] = max(1.0, min(MAX_WIDEN, (limit - x) / w))
+        return out
+
+    def _refit_notes(self, b, width):
+        """Which of a block's note items it holds whole at its (widened)
+        width; the rest float beside it."""
+        shown, floating = [], []
+        for text, kind, priority in b["items"]:
+            if len(wrap(" ".join(shown + [text]), HAND, NOTE_SIZE, width - 8)) <= NOTE_LINES:
+                shown.append(text)
+            else:
+                floating.append({"text": text, "kind": kind, "priority": priority})
+        b["notes_text"], b["floating"] = " ".join(shown), floating
 
     def _col_x(self, c):
         """Left edge of grid column c on the page."""
@@ -559,6 +659,169 @@ class GridLayout(Cartographer):
         return W, H
 
     # ------------------------------------------------------------------
+    def _free_cells(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """The grid cells (row, half-member column) no line-up or line passes
+        through: where an event can go."""
+        step = self.unit * self.hs
+        c_lo = -int((x0 - MARGIN) // step)
+        c_hi = int((width - MARGIN - x0) // step)
+        rows = [t for t in range(n_rows) if row_y(t + 1) <= height - FOOTER_H + 1]
+        # the blocks themselves, not the width their band reserves (a band's
+        # narrower line-ups leave room beside them), and every line's path
+        blocks, busy = set(), set()
+        for b in boxes:  # a block's own sub-rows (not its channel below), and its gap column for lines
+            depth = math.ceil(self.block_h / (self.pitch / SUB) - 0.01)
+            for t in range(b["row"], b["row"] + depth):
+                for c in range(b["c_lo"], b["c_hi"] + 1):
+                    busy.add((t, c))
+                blocks.update((t, c) for c in range(b["c_lo"], b["c_hi"]))
+        for line in list(trunks) + list(edges):
+            pts = line["points"]
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                if ax == bx and abs(by - ay) > self.pitch:  # a long drop may pass behind a note, as behind a block's
+                    continue
+                lx, hx, ly, hy = min(ax, bx) - 6, max(ax, bx) + 6, min(ay, by) - 6, max(ay, by) + 6
+                for t in rows:
+                    if not (ly < row_y(t + 1) and row_y(t) < hy):
+                        continue
+                    for c in range(c_lo, c_hi):
+                        if lx < self._col_x(c + 1) and self._col_x(c) < hx:
+                            busy.add((t, c))
+        free = {(t, c) for t in rows for c in range(c_lo, c_hi) if (t, c) not in busy}
+        return free, blocks, rows, c_lo, c_hi
+
+    def _place_notes(self, boxes, trunks, edges, x0, row_y, width, height, n_rows):
+        """Floating notes, each its own small block in free cells near the
+        line-up it belongs to, tied to it with a dotted line: the events from
+        its albums and tours (app/events.py) and whatever its block couldn't
+        hold whole - story, albums, careers, style. Most telling first, as
+        close as there's room: the line-up's own row, else up to NOTE_ROWS
+        rows away (the page is to be full, with everything in its place in
+        the history - the user's instructions). A tie runs along the row and
+        down a column, crossing lines but never a block."""
+        from app.events import MIN_SIGNIFICANCE, same_story
+        from app.refiner import MONTHS
+        free, blocks, rows, c_lo, c_hi = self._free_cells(boxes, trunks, edges, x0, row_y, width, height, n_rows)
+        by_id = {b["id"]: b for b in boxes}
+        told = {band.id: [s["text"] for s in band.stories] for band in self.tree.bands.values()}
+        for b in boxes:
+            told.setdefault(b["band_id"], []).append(b["notes_text"])
+        pending = []
+        for band in self.tree.bands.values():
+            for e in band.events:
+                if e.get("significance", 1) < MIN_SIGNIFICANCE:
+                    continue
+                lu = lineup_for(band.lineups, e["year"])
+                box = by_id.get(f"{band.id}#{lu.number}") if lu else None
+                if box is None:
+                    continue
+                when = e.get("date") or ""
+                month = int(when[5:7]) if len(when) >= 7 and when[5:7].isdigit() else 0
+                label = (f"{MONTHS[month - 1]} {when[:4]}" if 1 <= month <= 12 else when[:4]).upper()  # "1978-00": the year
+                heading = f"{e['subject'].upper()} · {label}" if e.get("subject") else label
+                pending.append({"text": e["text"], "kind": "event", "priority": 4 + e["significance"],
+                                "heading": heading, "box": box, "band": band, "year": e["year"],
+                                "significance": e["significance"]})
+        for b in boxes:
+            for n in b.get("floating", []):
+                pending.append(dict(n, heading=None, box=b, band=self.tree.bands[b["band_id"]], year=b["start"]))
+        pending.sort(key=lambda n: (-n["priority"], n["year"]))
+        placed = []
+        for n in pending:
+            band, box = n["band"], n["box"]
+            if n["kind"] == "event" and same_story(n["text"], told[band.id]):
+                continue
+            spot = self._note_spot(n, box, free, blocks, rows, c_lo, c_hi, row_y)
+            if spot is None:
+                continue
+            t, c, w, lines, path_cells, tie = spot
+            k_rows = math.ceil((NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / (self.pitch / SUB))
+            for i in range(k_rows):
+                for k in range(c, c + w):
+                    free.discard((t + i, k))
+                    blocks.add((t + i, k))
+            for cell in path_cells:  # a later note mustn't sit on this tie
+                free.discard(cell)
+            x, y = self._col_x(c) + EVENT_PAD / 2, row_y(t) + EVENT_PAD / 2
+            ew = self._col_x(c + w) - self._col_x(c) - EVENT_PAD
+            eh = NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD
+            placed.append({"band_id": band.id, "lineup": box["id"], "year": n["year"], "kind": n["kind"],
+                           "x": x, "y": y, "w": ew, "h": eh, "heading": n["heading"], "lines": lines,
+                           "significance": n.get("significance"), "tie": tie, "scale": FLOAT_SCALE})
+            told[band.id].append(n["text"])
+        return placed
+
+    def _note_spot(self, n, box, free, blocks, rows, c_lo, c_hi, row_y):
+        """(row, column, width, lines, cells the tie crosses, tie points) for a
+        floating note, or None: the narrowest block that holds it, nearest
+        its line-up, with a tie that crosses no block."""
+        bl, br = box["c_lo"], box["c_hi"] + 1
+        home = box["row"]
+        sub_h = self.pitch / SUB
+        depth = math.ceil(self.block_h / sub_h - 0.01)
+        mid = lambda t: row_y(t) + min(self.title_h, sub_h) / 2
+        colx = lambda k: (self._col_x(k) + self._col_x(k + 1)) / 2
+        own = {(r, k) for r in range(home, home + depth) for k in range(bl, br)}
+        clear = lambda cells: all(cell not in blocks or cell in own for cell in cells)
+        best = None
+        row_set = set(rows)
+        for t in sorted(rows, key=lambda r: abs(r - home)):
+            if abs(t - home) > NOTE_ROWS * SUB or (best is not None and abs(t - home) * 6 / SUB > best[0][0]):
+                continue
+            for w in EVENT_WIDTHS:
+                text_w = self._col_x(w) - self._col_x(0) - 2 * EVENT_PAD
+                lines = wrap(n["text"], HAND, NOTE_SIZE * FLOAT_SCALE, text_w)
+                if n["heading"] and text_width(n["heading"], HAND, DATE_SIZE * FLOAT_SCALE) > text_w:
+                    continue
+                k_rows = math.ceil((NOTE_LINE * FLOAT_SCALE * (len(lines) + (1 if n["heading"] else 0)) + EVENT_PAD) / sub_h)
+                if k_rows > 2 * SUB or any(t + i not in row_set for i in range(k_rows)):
+                    continue
+                for c in range(c_lo, c_hi - w + 1):
+                    if not all((t + i, k) in free for i in range(k_rows) for k in range(c, c + w)):
+                        continue
+                    right = c >= br
+                    edge_x = box["x"] + box["w"] + 4 if right else box["x"] - 4
+                    near_x = self._col_x(c) + EVENT_PAD / 2 if c >= bl else self._col_x(c + w) - EVENT_PAD / 2
+                    if t <= home < t + k_rows:  # level with the line-up's name: tied along its sub-row
+                        if not right and c + w > bl:
+                            continue
+                        between = range(br, c) if right else range(c + w, bl)
+                        cells = [(home, k) for k in between]
+                        if not clear(cells):
+                            continue
+                        cost = len(cells)
+                        tie = [(edge_x, mid(home)), (near_x, mid(home))]
+                    else:
+                        step = 1 if t > home else -1
+                        start = home + depth if t > home else home - 1  # below (or above) the block
+                        lo_c, hi_c = min(bl, c), max(br - 1, c + w - 1)
+                        route = None
+                        # straight out of the block's bottom (or top), down its own column, along to the note
+                        tc = min(max(c if c > bl else c + w - 1, bl), br - 1)  # its gap column at most
+                        down = [(r, tc) for r in range(start, t, step)]
+                        along = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
+                        if clear(down + along):
+                            y0 = box["y"] + box["h"] if t > home else box["y"]
+                            route = (down + along, [(colx(tc), y0), (colx(tc), mid(t)),
+                                                    (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
+                        if route is None:  # else along the home row to a column beside the block first
+                            tc = br if right or c >= bl else bl - 1
+                            leg1 = [(home, k) for k in (range(br, tc + 1) if tc >= br else range(tc, bl))]
+                            leg2 = [(r, tc) for r in range(home + step, t, step) if (r, tc) not in own]
+                            leg3 = [(t, k) for k in range(min(tc, c), max(tc, c + w - 1) + 1) if not (c <= k < c + w)]
+                            if clear(leg1 + leg2 + leg3):
+                                route = (leg1 + leg2 + leg3, [(edge_x, mid(home)), (colx(tc), mid(home)), (colx(tc), mid(t)),
+                                                              (near_x if not (c <= tc < c + w) else colx(tc), mid(t))])
+                        if route is None:
+                            continue
+                        cells, tie = route
+                        cost = 6 * abs(t - home) / SUB + len(cells)
+                    score = (cost, w)
+                    if best is None or score < best[0]:
+                        best = (score, (t, c, w, lines, cells, tie))
+                break  # the narrowest width that holds the text
+        return best[1] if best else None
+
     def _info_notes(self):
         """Info notes, each attached to the band and the time it belongs to
         (the user's instruction: part of the layout, never a list apart):
@@ -618,45 +881,75 @@ class GridLayout(Cartographer):
     # ------------------------------------------------------------------
     def _route(self, placed, x0, row_y):
         """Each musician's line straight down to their next line-up in the
-        same run; every other move along the channel under the source row,
-        down the nearest clear gap, along the channel above the target row
-        and into place. Each run takes the nearest free track in its channel or
-        gap (_Tracks), so no two lines share a stretch of ink."""
+        same run; every other move drops into the channel under its line-up,
+        along to a clear gap, down it, along the channel over the line-up it
+        goes to and into place. With each column at its own pace the channels
+        don't run level across the page, so every run is checked against the
+        blocks themselves and the gap chosen is the shortest way round them.
+        Each run takes the nearest free track (_Tracks), so no two lines share
+        a stretch of ink."""
         member = {(b["id"], m["person_id"]): m for b in placed for m in b["members"]}
         unit_of = {}
         for u in self._units_cache:
             for b in u["boxes"]:
                 unit_of[b["id"]] = id(u)
-        channel_y = lambda t: row_y(t) + self.block_h + (self.pitch - self.block_h) / 2
-        channels = _Tracks((self.pitch - self.block_h) / 2 - 2, CHANNEL_STEP)  # row -> horizontal runs
-        gaps = _Tracks(self.unit * self.hs / 2 - 3)               # column -> vertical runs
+        ch = self.pitch - self.block_h
+        rects = [(b["x"] - 2, b["y"], b["x"] + b["w"] + 2, b["y"] + self.block_h, b["id"]) for b in placed]
+        below = lambda b: b["y"] + self.block_h + ch / 2
+        above = lambda b: b["y"] - ch / 2
+        channels = _Tracks(ch / 2 - 2, CHANNEL_STEP)  # horizontal runs, keyed by their level
+        gaps = _Tracks(self.unit * self.hs / 2 - 3)   # vertical runs, keyed by their x
+        step = self.unit * self.hs
+        n_cols = int((max(r[2] for r in rects) - x0) / step) + 2
+        gap_xs = [self._col_x(c + 0.5) for c in range(-1, n_cols + 1)]
+
+        def blocked(x1, y1, x2, y2, skip=()):
+            lx, hx, ly, hy = min(x1, x2), max(x1, x2), min(y1, y2), max(y1, y2)
+            return any(rx0 < hx and lx < rx1 and ry0 < hy and ly < ry1 and bid not in skip
+                       for rx0, ry0, rx1, ry1, bid in rects) if (hx > lx or hy > ly) else False
 
         trunks, edges = [], []
         for person_id, a, b in self.moves:
             ma, mb = member.get((a["id"], person_id)), member.get((b["id"], person_id))
             if ma is None or mb is None:
                 continue  # beyond MAX_MEMBERS
-            ta, tb = self._tier[a["id"]], self._tier[b["id"]]
+            skip = (a["id"], b["id"])
+            y1, y2 = below(a), above(b)
+            pts = None
             if unit_of[a["id"]] == unit_of[b["id"]] and b["number"] == a["number"] + 1:
-                pts = [(ma["cx"], ma["bottom"])]
-                if mb["cx"] != ma["cx"]:
-                    y = channel_y(tb - 1) + channels.take(tb - 1, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
-                    pts += [(ma["cx"], y), (mb["cx"], y)]
-                pts.append((mb["cx"], b["bar_y"]))
-                trunks.append({"person_id": person_id, "points": pts, "dashed": b["after_gap"]})
-                continue
-            if tb == ta + 1:
-                y1 = channel_y(ta) + channels.take(ta, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
-                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (mb["cx"], y1), (mb["cx"], b["bar_y"])]
-            else:
-                step = self.unit * self.hs
-                c = self._clear_gap(ta + 1, tb - 1, (mb["cx"] - x0) / step, (ma["cx"] - x0) / step)
-                xc = self._col_x(c + 0.5) if c is not None else x0 - MARGIN / 2
-                y1, y2 = channel_y(ta), channel_y(tb - 1)
-                xg = xc + gaps.take(c, y1, y2)
-                y1 += channels.take(ta, ma["cx"], xg, side=-1, leaves=ma["cx"])
-                y2 += channels.take(tb - 1, xg, mb["cx"], side=1, arrives=mb["cx"])
-                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y1), (xg, y1), (xg, y2), (mb["cx"], y2),
+                # the band's next line-up: straight down, jogging just above it or just below this one
+                for level in (y2, y1):
+                    if not (blocked(ma["cx"], ma["bottom"], ma["cx"], level, skip)
+                            or blocked(ma["cx"], level, mb["cx"], level, skip)
+                            or blocked(mb["cx"], level, mb["cx"], b["bar_y"], skip)):
+                        pts = [(ma["cx"], ma["bottom"])]
+                        if mb["cx"] != ma["cx"]:
+                            y = level + channels.take(round(level), ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
+                            pts += [(ma["cx"], y), (mb["cx"], y)]
+                        pts.append((mb["cx"], b["bar_y"]))
+                        break
+                if pts is not None:
+                    trunks.append({"person_id": person_id, "points": pts, "dashed": b["after_gap"]})
+                    continue
+            if abs(y2 - y1) < 1 and not blocked(ma["cx"], y1, mb["cx"], y1, skip):
+                level = round(y1)
+                y = y1 + channels.take(level, ma["cx"], mb["cx"], leaves=ma["cx"], arrives=mb["cx"])
+                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], y), (mb["cx"], y), (mb["cx"], b["bar_y"])]
+            if pts is None:
+                best = None
+                for xg in gap_xs + [ma["cx"], mb["cx"]]:
+                    if (blocked(ma["cx"], y1, xg, y1, skip) or blocked(xg, y1, xg, y2, skip)
+                            or blocked(xg, y2, mb["cx"], y2, skip) or blocked(mb["cx"], y2, mb["cx"], b["bar_y"], skip)
+                            or blocked(ma["cx"], ma["bottom"], ma["cx"], y1, skip)):
+                        continue
+                    d = abs(xg - ma["cx"]) + abs(xg - mb["cx"])
+                    if best is None or d < best[0]:
+                        best = (d, xg)
+                xg = best[1] if best else x0 - MARGIN / 2  # no way round: down the margin
+                xg += gaps.take(round(xg), y1, y2) if xg not in (ma["cx"], mb["cx"]) else 0
+                ya = y1 + channels.take(round(y1), ma["cx"], xg, side=-1, leaves=ma["cx"])
+                yb = y2 + channels.take(round(y2), xg, mb["cx"], side=1, arrives=mb["cx"])
+                pts = [(ma["cx"], ma["bottom"]), (ma["cx"], ya), (xg, ya), (xg, yb), (mb["cx"], yb),
                        (mb["cx"], b["bar_y"])]
             edges.append({"person_id": person_id, "from": a["id"], "to": b["id"],
                           "same_band": a["band_id"] == b["band_id"],
@@ -668,14 +961,3 @@ class GridLayout(Cartographer):
                                    "points": [(m["cx"], m["bottom"]), (m["cx"], m["bottom"] + 20)]})
         return trunks, edges
 
-    def _clear_gap(self, t1, t2, near, also):
-        """A column clear of line-ups from row t1 to t2 (gaps beside blocks, or
-        empty cells), nearest the target and then the source."""
-        n_cols = max(c for _, c in self._cells) + 2 if self._cells else 1
-        best = None
-        for c in range(-1, n_cols + 1):
-            if all(self._cells.get((t, c)) in (None, "gap") for t in range(t1, t2 + 1)):
-                d = abs(c - near) + 0.5 * abs(c - also)
-                if best is None or d < best[0]:
-                    best = (d, c)
-        return best[1] if best else None

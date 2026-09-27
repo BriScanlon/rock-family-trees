@@ -29,7 +29,9 @@ OPTIMISE_SECONDS = float(os.getenv("OPTIMISE_SECONDS", "60"))
 # the smallest readable (subtracted as a bonus's negative)
 W_COVERAGE, W_CONTENT, W_DETAIL, W_NOTES, W_CHRONOLOGY, W_TEXT = 1.0, 0.35, 0.15, 0.1, 0.5, 0.15
 SCALES = (1.0, 1.1, 1.2, 1.3)
-PULLS = [(1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
+# placement pulls (era, top, near) to try; None is the grid's own defaults, which the
+# band selection used, so the greedy choice always has a start that fits
+PULLS = [None, (1.5, 0.3, 0.08), (3.0, 0.3, 0.08), (0.5, 0.3, 0.08), (1.5, 0.1, 0.3), (1.5, 0.6, 0.02)]
 
 
 class Placement:

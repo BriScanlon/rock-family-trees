@@ -29,11 +29,10 @@ def test_the_optimiser_keeps_the_hard_rules():
     people = {k: {s.person_id for s in b.stints} for k, b in tree.bands.items()}
     assert _connected(tree.bands, people, root) == set(tree.bands)  # one family
     assert layout["stats"]["smallest_text_pt"] >= 6.5
-    for b in layout["boxes"]:  # time runs down every column
+    for b in layout["boxes"]:  # time runs down each band
         for other in layout["boxes"]:
-            overlap = b["x"] < other["x"] + other["w"] and other["x"] < b["x"] + b["w"]
-            if overlap and other["row"] > b["row"]:
-                assert other["start"] >= b["start"] - 1
+            if other["band_id"] == b["band_id"] and other["start"] > b["start"]:
+                assert other["row"] > b["row"]
 
 
 def test_the_optimiser_is_repeatable_with_a_seed():

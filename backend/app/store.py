@@ -18,7 +18,7 @@ class _Notes:
 
     def latest_notes(self, band_id, model=None):
         sets = [n for n in self._all_notes() if n.get("band_id") == band_id and n.get("model") != "curator"
-                and (not model or n.get("model") == model)]
+                and not n.get("subject") and (not model or n.get("model") == model)]  # events aren't the band's notes
         return max(sets, key=lambda n: n.get("written_at", 0), default=None)
 
 

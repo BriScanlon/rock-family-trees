@@ -125,6 +125,35 @@ On Deep Purple A1, overlapping runs between different musicians went from 6 to 1
 
 Deep Purple family: 13 of 80 candidate bands have a chart. Deep Purple now matches it exactly (Bolin on guitar, Satriani, the 1989 gap). Rainbow has none, and its MusicBrainz data is poor (Blackmore missing after 1993, roles blank): that is the case for the line-up confirmation graph, which is deferred.
 
+## Filling the page: events, floating notes, a flowing grid (2026-09-27, evening)
+
+The user wants no significant white space. On Deep Purple A1, empty tiles fell from 44% to 23%, and the poster went from 19 bands and 58 line-ups to 27 bands and 67 line-ups. Each step:
+
+| Change | Empty |
+|---|---|
+| start (after info notes) | 44% |
+| events + floating notes (tied to their line-ups) | 37% (with weaker era pull) |
+| each column at its own pace (quarter rows; moves routed round blocks) | 32% |
+| blocks stretch into free columns (up to 1.8x) | 29% |
+| rows not spread apart | 25% |
+| narrow line-ups, drift, packing into holes | 26-27% (no gain alone) |
+| **time down each band and move, not every column** | **23%**, +5 bands, +13 line-ups |
+
+Findings:
+- Blocks and notes are dense: 6% and 0% of their tiles are empty.
+- The frame (margins, title, key) is 10% of the page and 43% empty.
+- What's left is space between blocks. Time down every column was what kept early bands (Captain Beyond, Kansas) off the page: every column held a 2000s line-up lower down.
+- Larger text, larger floating notes, and notes over lines each made little difference.
+
+Events: 116 for the Deep Purple family (all 40 bands, 6 albums and 2 tours each). They include:
+- Iommi's accident;
+- the 1975 Indonesian tour riot;
+- the Born Again Stonehenge props;
+- Rainbow headlining the first Monsters of Rock;
+- Machine Head recorded in the Grand Hotel after the casino fire.
+
+Next: the remaining gaps sit between blocks and in the frame. A smaller key and title band, and letting notes span two columns' worth of gutter, are the obvious levers.
+
 ## How the look was arrived at
 
 1. First pass: boxed line-ups on aged paper with a Western title font. Research found Frame's trees are black ink on white, in precise architectural hand lettering (he trained as a surveyor/architect), with many handwritten notes. Sources: Eye Magazine "Branches and roots" (issue 78, 2010), Wikipedia, and interviews. Most pages couldn't be fetched from the sandbox, only searched.

@@ -63,38 +63,49 @@ class Neo4jStore:
             "MERGE (ns:NoteSet {key: $key}) "
             "SET ns.model = $model, ns.revision = $revision, ns.article_title = $title, "
             "ns.article_url = $url, ns.lineups = $lineups, ns.prompt = $prompt, ns.written_at = datetime() "
-            "MERGE (b)-[:HAS_NOTES]->(ns) "
-            "WITH ns OPTIONAL MATCH (ns)-[:INCLUDES]->(old:Note) DETACH DELETE old",
+            "WITH b, ns OPTIONAL MATCH (ns)-[:INCLUDES]->(old:Note) DETACH DELETE old "
+            "WITH DISTINCT b, ns WHERE $subject IS NULL MERGE (b)-[:HAS_NOTES]->(ns)",
             band=band_id, key=key, model=result.get("model"), revision=source.get("revision"),
             title=source.get("title"), url=source.get("url"), lineups=result.get("lineups"),
-            prompt=result.get("prompt"),
+            prompt=result.get("prompt"), subject=(result.get("subject") or {}).get("wikidata"),
         )
+        subject = result.get("subject")
+        if subject:  # an event reading: its notes hang off the album or tour they're about
+            label, rel = ("Tour", "TOURED") if subject.get("kind") == "tour" else ("Album", "RELEASED")
+            tx.run(
+                f"MATCH (b:Band {{mbid: $band}}), (ns:NoteSet {{key: $key}}) "
+                f"MERGE (s:{label} {{wikidata: $q}}) SET s.title = $title, s.date = $date, s.sitelinks = $links "
+                f"MERGE (b)-[:{rel}]->(s) MERGE (s)-[:HAS_NOTES]->(ns)",
+                band=band_id, key=key, q=subject["wikidata"], title=subject.get("title"),
+                date=subject.get("date"), links=subject.get("sitelinks"),
+            )
         notes = [dict(n, kept=True) for n in result.get("notes", [])] + \
                 [dict(n, kept=False) for n in result.get("dropped", [])]
         for i, n in enumerate(notes):
             tx.run(
                 "MATCH (ns:NoteSet {key: $key}) "
                 "CREATE (ns)-[:INCLUDES]->(:Note {date: $date, year: $year, text: $text, source: $source, "
-                "kept: $kept, reason: $reason, position: $i})",
+                "kept: $kept, reason: $reason, position: $i, significance: $significance})",
                 key=key, date=n.get("date"), year=n.get("year"), text=n.get("text"), source=n.get("source"),
-                kept=n["kept"], reason=n.get("reason"), i=i,
+                kept=n["kept"], reason=n.get("reason"), i=i, significance=n.get("significance"),
             )
 
     def get_notes(self, key):
         with self.driver.session() as s:
-            return s.execute_read(self._get_notes_tx, "ns.key = $key", key=key)
+            return s.execute_read(self._get_notes_tx, "ns.key = $key", key=key, match="MATCH (ns:NoteSet)")
 
     def latest_notes(self, band_id, model=None):
         """The band's most recently written notes (from any article revision),
         for when Wikipedia or the model can't be reached."""
         where = "b.mbid = $band AND ns.model <> 'curator'" + (" AND ns.model = $model" if model else "")
         with self.driver.session() as s:
-            return s.execute_read(self._get_notes_tx, where, band=band_id, model=model)
+            return s.execute_read(self._get_notes_tx, where, band=band_id, model=model,
+                                  match="MATCH (b:Band)-[:HAS_NOTES]->(ns:NoteSet)")
 
     @staticmethod
-    def _get_notes_tx(tx, where, **params):
+    def _get_notes_tx(tx, where, match, **params):
         row = tx.run(
-            f"MATCH (b:Band)-[:HAS_NOTES]->(ns:NoteSet) WHERE {where} "
+            f"{match} WHERE {where} "
             "WITH ns ORDER BY ns.written_at DESC LIMIT 1 "
             "OPTIONAL MATCH (ns)-[:INCLUDES]->(n:Note) "
             "WITH ns, n ORDER BY n.position "
@@ -123,7 +134,7 @@ class Neo4jStore:
             f"MERGE (n:{label} {{mbid: $mbid}}) "
             "SET n.name = $name, n.type = $type, n.disambiguation = $disambiguation, "
             "n.begin = $begin, n.end = $end, n.ended = $ended, n.genres = $genres, n.wikidata = $wikidata, "
-            "n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, "
+            "n.sitelinks = $sitelinks, n.chart = $chart, n.chart_source = $chart_source, n.works = $works, "
             "n.fetched_at = datetime()",
             mbid=record["mbid"], name=record["name"], type=record.get("type"),
             disambiguation=record.get("disambiguation"), begin=record.get("begin"),
@@ -131,6 +142,7 @@ class Neo4jStore:
             wikidata=record.get("wikidata"), sitelinks=record.get("sitelinks"),
             chart=None if record.get("chart") is None else json.dumps(record["chart"]),
             chart_source=record.get("chart_source"),
+            works=None if record.get("works") is None else json.dumps(record["works"]),
         )
         if record.get("albums") is not None and label == "Band":
             # each album a node on the band, dated: a note in the band's history
@@ -189,6 +201,7 @@ class Neo4jStore:
             "sitelinks": n.get("sitelinks"),  # Wikipedias with an article on the band; None: not looked up
             "chart": None if n.get("chart") is None else json.loads(n["chart"]),  # Wikipedia's member chart; [] none
             "chart_source": n.get("chart_source"),
+            "works": None if n.get("works") is None else json.loads(n["works"]),  # its albums and tours (Wikidata)
             "memberships": [
                 {"person_id": r["pid"], "person_name": r["pname"], "band_id": r["bid"],
                  "band_name": r["bname"], "begin": r["begin"], "end": r["end"],
