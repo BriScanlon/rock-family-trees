@@ -17,8 +17,8 @@ import os
 
 from app import narrative
 
-EVENT_BANDS = int(os.getenv("EVENT_BANDS", "12"))    # top-ranked bands whose albums and tours are read
-EVENT_ALBUMS = int(os.getenv("EVENT_ALBUMS", "4"))   # a band's most written-about albums read
+EVENT_BANDS = int(os.getenv("EVENT_BANDS", "40"))    # candidate bands whose albums and tours are read (all, for a full page)
+EVENT_ALBUMS = int(os.getenv("EVENT_ALBUMS", "6"))   # a band's most written-about albums read
 EVENT_TOURS = int(os.getenv("EVENT_TOURS", "2"))     # and tours
 EVENT_CHARS = 160                                    # an event block holds a little more than a note
 MIN_SIGNIFICANCE = int(os.getenv("EVENT_MIN_SIGNIFICANCE", "3"))  # placed on the poster from this up

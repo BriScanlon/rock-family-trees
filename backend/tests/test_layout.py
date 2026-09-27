@@ -152,8 +152,11 @@ def test_line_ups_never_overlap(layout):
 
 
 def test_every_member_takes_one_slot(layout):
-    slot = layout["lettering"]["col_w"]
+    # one equal slot each; a block stretched into free space beside it
+    # spreads them evenly, never narrower than a slot
     for b in layout["boxes"]:
+        slot = b["w"] / b["span"]
+        assert slot >= layout["lettering"]["col_w"] - 1e-6
         xs = sorted(m["cx"] for m in b["members"])
         assert all(abs((x - b["x"] - slot / 2) / slot - round((x - b["x"] - slot / 2) / slot)) < 1e-6 for x in xs)
         assert len(set(xs)) == len(xs) and xs[-1] < b["x"] + b["w"]

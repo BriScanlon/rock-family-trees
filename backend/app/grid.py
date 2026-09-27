@@ -30,6 +30,7 @@ CAREERS = 12            # a band's longest-serving members whose other bands (of
 EVENT_WIDTHS = (6, 8, 10, 12, 16)  # an event block's width in half-member columns, narrowest that holds it
 EVENT_PAD = 10          # margin inside an event block's cells
 NOTE_ROWS = 3           # a floating note sits within this many rows of its line-up (tied to it)
+MAX_WIDEN = 1.8         # a block may stretch to this many times its width into free columns beside it
 FLOAT_SCALE = 1.4       # floating notes print larger than a block's: Frame lettered his asides big
 SUB = 4                 # sub-rows per row: a line-up starts at any quarter row, so each column keeps
                         # its own pace (the user chose this over rows level across the page)
@@ -41,7 +42,7 @@ CHANNEL_STEP = 4        # and in a channel, where more lines meet (seven tracks 
 PACK_REPAIRS = 40       # rounds of re-placing to turn upward moves downwards
 MAX_HSPREAD = 1.15      # most the columns may be spread sideways to reach the sheet's edges
 MAX_GROW = 1.5         # most a drawing may be enlarged to fill its sheet
-MAX_SPREAD = 0.35       # most the rows may be spread (as a share of a row) to fill a sheet
+MAX_SPREAD = 0.0         # rows are not spread apart to reach the bottom: spare height is left for notes, not gaps
 HINT_WEIGHT = 0.2       # pull (per column) towards a band's preferred column, when the optimiser gives one
 ERA_WEIGHT = 0.5        # pull towards the row where line-ups of the same date sit
 TOP_WEIGHT = 1.0        # pull towards the top: keep the tree compact
@@ -290,7 +291,7 @@ class GridLayout(Cartographer):
                    "level": band.level, "band_start": band.start, "name": name, "name_size": size, "name_w": name_w,
                    "dates": dates, "date_label": f"{lu.start_label} – {lu.end_label}".upper(),
                    "cols": columns[i], "span": span, "notes_text": notes, "marks": marks, "lineup": lu,
-                   "recorded": recorded, "floating": floating}
+                   "recorded": recorded, "floating": floating, "items": items}
             self.boxes[box["id"]] = box
             self.box_order.append(box["id"])
             if i == 0 or lu.after_gap:
@@ -511,11 +512,16 @@ class GridLayout(Cartographer):
         row_y = lambda t: TITLE_H + t * pitch / SUB  # t in sub-rows
         self.pitch = pitch
 
+        stretch = self._widen(placed, row_y, width)
         boxes = []
         for b in placed:
             t, c0 = self._tier[b["id"]], self._col0[b["id"]]
             x, y = self._col_x(c0), row_y(t)
             lu = b["lineup"]
+            k = stretch[b["id"]]
+            slot = self.slot * k  # members spread across the widened block
+            if k > 1:  # wider: it holds more of its notes, fewer float beside it
+                self._refit_notes(b, b["span"] * slot)
             members = []
             for m in lu.members[:MAX_MEMBERS]:
                 lines = _split_name(m.name.upper())
@@ -533,12 +539,15 @@ class GridLayout(Cartographer):
             members.sort(key=lambda m: m["col"])
             cxs = [m["cx"] for m in members] or [x + slot / 2]
             notes = wrap(b["notes_text"], HAND, NOTE_SIZE, b["span"] * slot - 8)[:NOTE_LINES]
+            step = self.unit * self.hs
+            b.update({"c_lo": c0, "c_hi": c0 + math.ceil(b["span"] * slot / step)})  # columns it now covers
             b.update({"x": x, "y": y, "w": b["span"] * slot, "h": self.block_h, "footprint": self.block_h,
                       "lane": c0, "row": t, "bar_y": y + self.bar_dy, "bar": (min(x, min(cxs) - 12), max(cxs) + 12),
                       "members": members, "overflow": max(0, len(lu.members) - MAX_MEMBERS),
                       "notes": notes, "notes_x": x, "notes_y": y + self.title_h})
             boxes.append(b)
 
+        slot = self.slot
         trunks, edges = self._route(placed, x0, row_y)
         events = self._place_notes(boxes, trunks, edges, x0, row_y, width, height, (self.max_rows or used_rows) * SUB)
         years = []
@@ -563,6 +572,42 @@ class GridLayout(Cartographer):
         }
         return layout
 
+    def _widen(self, placed, row_y, width):
+        """How far each block stretches into the free columns to its right:
+        {box id: factor}. Frame's blocks vary in width and fill the space;
+        a block stretches until the next block that shares any of its height
+        (keeping a column's gutter for lines), or the sheet's edge, at most
+        MAX_WIDEN. Blocks only grow rightwards, and each stops short of where
+        its neighbours start, so none can meet."""
+        step = self.unit * self.hs
+        ch = self.pitch - self.block_h
+        rects = {b["id"]: (self._col_x(self._col0[b["id"]]), row_y(self._tier[b["id"]]), b["span"] * self.slot, b["start"])
+                 for b in placed}
+        out = {}
+        for bid, (x, y, w, start) in rects.items():
+            limit = width - MARGIN
+            for oid, (ox, oy, ow, ostart) in rects.items():
+                if oid == bid or ox < x + w - 1:
+                    continue
+                beside = oy < y + self.block_h + ch and y < oy + self.block_h + ch
+                # time runs down every column: never reach over an earlier line-up below, or a later one above
+                out_of_time = (oy > y and ostart < start) or (oy < y and ostart > start)
+                if beside or out_of_time:
+                    limit = min(limit, ox - step)
+            out[bid] = max(1.0, min(MAX_WIDEN, (limit - x) / w))
+        return out
+
+    def _refit_notes(self, b, width):
+        """Which of a block's note items it holds whole at its (widened)
+        width; the rest float beside it."""
+        shown, floating = [], []
+        for text, kind, priority in b["items"]:
+            if len(wrap(" ".join(shown + [text]), HAND, NOTE_SIZE, width - 8)) <= NOTE_LINES:
+                shown.append(text)
+            else:
+                floating.append({"text": text, "kind": kind, "priority": priority})
+        b["notes_text"], b["floating"] = " ".join(shown), floating
+
     def _col_x(self, c):
         """Left edge of grid column c on the page."""
         return self.x0 + c * self.unit * self.hs
@@ -585,9 +630,9 @@ class GridLayout(Cartographer):
         for b in boxes:  # a block's own sub-rows (not its channel below), and its gap column for lines
             depth = math.ceil(self.block_h / (self.pitch / SUB) - 0.01)
             for t in range(b["row"], b["row"] + depth):
-                for c in range(b["lane"], b["lane"] + 2 * b["span"] + 1):
+                for c in range(b["c_lo"], b["c_hi"] + 1):
                     busy.add((t, c))
-                blocks.update((t, c) for c in range(b["lane"], b["lane"] + 2 * b["span"]))
+                blocks.update((t, c) for c in range(b["c_lo"], b["c_hi"]))
         for line in list(trunks) + list(edges):
             pts = line["points"]
             for (ax, ay), (bx, by) in zip(pts, pts[1:]):
@@ -668,7 +713,7 @@ class GridLayout(Cartographer):
         """(row, column, width, lines, cells the tie crosses, tie points) for a
         floating note, or None: the narrowest block that holds it, nearest
         its line-up, with a tie that crosses no block."""
-        bl, br = box["lane"], box["lane"] + 2 * box["span"] + 1
+        bl, br = box["c_lo"], box["c_hi"] + 1
         home = box["row"]
         sub_h = self.pitch / SUB
         depth = math.ceil(self.block_h / sub_h - 0.01)
