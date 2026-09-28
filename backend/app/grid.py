@@ -941,6 +941,11 @@ class GridLayout(Cartographer):
                 unit_of[b["id"]] = id(u)
         ch = self.pitch - self.block_h
         rects = [(b["x"] - 2, b["y"], b["x"] + b["w"] + 2, b["y"] + self.block_h, b["id"]) for b in placed]
+        # the room kept beside a line-up for its big event is kept clear of lines too
+        # (routed through, it looked empty and the event lost its place - Knebworth)
+        step_px = self.unit * self.hs
+        rects += [(b["x"] + b["w"] + 2, b["y"], b["x"] + b["w"] + b["reserve"] * step_px, b["y"] + self.block_h, b["id"])
+                  for b in placed if b.get("reserve")]
         below = lambda b: b["y"] + self.block_h + ch / 2
         above = lambda b: b["y"] - ch / 2
         channels = _Tracks(ch / 2 - 2, CHANNEL_STEP)  # horizontal runs, keyed by their level

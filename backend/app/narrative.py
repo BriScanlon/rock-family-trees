@@ -196,6 +196,10 @@ def check(notes, article_text, max_chars=MAX_NOTE_CHARS, repair=False):
             reason = "source not found in the article"
         elif _copies(n["text"], article_words):
             reason = f"shares {COPY_RUN}+ words with the article"
+        if not reason:  # the source's own year wins: the model dated Knebworth (Aug 1996) 1997
+            years = set(re.findall(r"\b(1[89]\d\d|20\d\d)\b", n.get("source", "")))
+            if len(years) == 1 and n["date"][:4] not in years:
+                n = dict(n, date=years.pop())
         if not reason and n["text"][:1].islower():  # sentence case, whatever the model did
             n = dict(n, text=n["text"][0].upper() + n["text"][1:])
         (dropped if reason else kept).append(dict(n, reason=reason) if reason else dict(n, year=_year(n["date"])))

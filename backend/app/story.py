@@ -68,7 +68,7 @@ SCHEMA = {
 
 
 def prompt_id():
-    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}|repair+context|any-article".encode()).hexdigest()[:8]
+    return hashlib.sha1(f"{SYSTEM}|{narrative.VERIFY}|repair+context|any-article|source-year".encode()).hexdigest()[:8]
 
 
 def story_key(band_id, articles, lineups, model):

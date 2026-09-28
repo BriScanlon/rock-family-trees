@@ -204,3 +204,11 @@ def test_corrections_by_hand_have_the_last_word(store):
     import pytest as _pytest
     with _pytest.raises(ValueError):
         narrative.add_note(store, "x", "the seventies", "Undated.")
+
+
+def test_the_sources_year_wins_over_the_models():
+    article = "In August 1996 the band played two nights at Knebworth to 125,000 people each night."
+    note = {"date": "1997-08", "text": "Two nights at Knebworth drew 125,000 apiece.",
+            "source": "In August 1996 the band played two nights at Knebworth to 125,000 people each night."}
+    kept, _ = narrative.check([note], article)
+    assert kept[0]["date"] == "1996" and int(kept[0]["year"]) == 1996
