@@ -112,7 +112,10 @@ class Harvester:
             # 2. Fetch their members (death dates, and other bands for the next generation)
             people = []
             weight = Counter()  # how much each member mattered to this generation's bands
+            from app.refiner import one_off
             for rec in fetched:
+                if one_off(rec):  # a one-night concert: its members' other bands aren't this family
+                    continue
                 for m in rec["memberships"]:
                     if m["band_id"] != rec["mbid"]:
                         continue

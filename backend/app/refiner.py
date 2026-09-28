@@ -136,6 +136,7 @@ class Band(BaseModel):
     albums: List[str] = []  # studio albums, "1972-03-25 Machine Head" (MusicBrainz), notes on their line-ups
     genres: List[str] = []
     events: List[dict] = []  # dated events from its albums' and tours' articles (app/events.py)
+    one_off: bool = False    # together under a month (a one-night concert): a leaf of the family
     standing: Optional[int] = None  # Wikipedias with an article on the band (Wikidata sitelinks)
 
 
@@ -313,7 +314,7 @@ class Refiner:
                 original="original" in [(a or "").lower() for a in m.get("attributes") or []],
             ))
 
-        band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end,
+        band = Band(id=rec["mbid"], name=rec["name"], level=level, start=b_start, end=b_end, one_off=one_off(rec),
                     ended=ended, stints=stints, undated=list(dict.fromkeys(undated)),
                     genres=list(rec.get("genres") or [])[:3], standing=rec.get("sitelinks"))
         band.lineups = self._lineups(band, labels)
@@ -412,6 +413,11 @@ class Refiner:
         served = defaultdict(list)    # their stints in those bands
 
         def add(band):
+            # a one-off (Mick Fleetwood and Friends, one night in 2020) joins the
+            # family through its members, but leads nowhere: Fleetwood Mac and The
+            # Who don't belong on an Oasis tree because Noel shared a stage once
+            if band.one_off:
+                return
             for st in band.stints:
                 years = st.end - st.start
                 if st.original:
@@ -461,6 +467,21 @@ class Refiner:
                 chosen[b.id] = b
                 add(b)
         return chosen
+
+
+ONE_OFF_DAYS = 31  # a band together no longer than this is a one-off (a single concert or session)
+
+
+def one_off(record):
+    """Whether a band's recorded life, first date to last, is under a month."""
+    begin, end = record.get("begin") or "", record.get("end") or ""
+    if len(begin) < 7 or len(end) < 7:
+        return False  # not known to the month: not evidence of a one-off
+    try:
+        pad = lambda d: d if len(d) >= 10 else d[:7] + "-01"
+        return (date.fromisoformat(pad(end)[:10]) - date.fromisoformat(pad(begin)[:10])).days < ONE_OFF_DAYS
+    except ValueError:
+        return False
 
 
 def _anchors(membership, band_name):
