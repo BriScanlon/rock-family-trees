@@ -156,3 +156,25 @@ def test_a_brief_absence_does_not_draw_the_line_up_twice():
     lineups = Refiner(today=2026.7).build(harvest).bands["o"].lineups
     sets = [tuple(m.person_id for m in lu.members) for lu in lineups]
     assert all(a != b for a, b in zip(sets, sets[1:])), sets  # never the same line-up twice in a row
+
+
+def test_a_one_off_concert_leads_nowhere():
+    """Noel Gallagher played one night with Mick Fleetwood and Friends: that
+    gig can be on the Oasis tree, but Fleetwood Mac and The Who can't come
+    in through it."""
+    from app.refiner import Refiner, one_off
+    rec = lambda mbid, name, begin, end, ms: {"mbid": mbid, "name": name, "type": "Group", "begin": begin,
+                                              "end": end, "ended": end is not None, "memberships": ms}
+    m = lambda pid, name, bid, bname, begin, end: {"person_id": pid, "person_name": name, "band_id": bid,
+                                                   "band_name": bname, "begin": begin, "end": end,
+                                                   "ended": end is not None, "attributes": ["guitar"]}
+    oasis = rec("o", "Oasis", "1991", "2009", [m("noel", "Noel Gallagher", "o", "Oasis", "1991", "2009")])
+    gig = rec("g", "Mick Fleetwood and Friends", "2020-02-25", "2020-02-25",
+              [m("noel", "Noel Gallagher", "g", "MFaF", "2020-02-25", "2020-02-25"),
+               m("mick", "Mick Fleetwood", "g", "MFaF", "2020-02-25", "2020-02-25")])
+    fmac = rec("f", "Fleetwood Mac", "1967", None, [m("mick", "Mick Fleetwood", "f", "Fleetwood Mac", "1967", None)])
+    assert one_off(gig) and not one_off(oasis) and not one_off(fmac)
+    harvest = {"root_id": "o", "root_name": "Oasis", "root_bands": ["o"], "band_levels": {"o": 0, "g": 1, "f": 2},
+               "records": {"o": oasis, "g": gig, "f": fmac}}
+    chosen = set(Refiner(today=2026.7).build(harvest).bands)
+    assert "g" in chosen and "f" not in chosen
