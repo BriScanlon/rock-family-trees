@@ -71,6 +71,21 @@ def _fullest(tree, paper, lettering, subtitle=None, scale=1.0):
 
 
 GROW_SCALES = (2.0, 1.8, 1.6, 1.45, 1.3, 1.15)  # larger lettering tried for a family that fits whole
+ROOMY_SCALE = 1.0  # a family that fits whole with nothing left out is small for its sheet: read further
+                  # (1.3 missed Oasis: event room and time rules fill the packing grid long before
+                  # the page looks full, and the drawing is only enlarged afterwards)
+
+
+def roomy(content, paper):
+    """Whether the whole family fits its sheet with nothing left out: small for
+    the sheet (Oasis, 12 bands on A1), so worth reading a generation further -
+    the bands its musicians went on to - and letting the fitting choose."""
+    if paper not in PAPER_MM:
+        return False
+    full = content.trees[LINEUP_CAPS[0]]
+    style = dict(STYLES.get(content.lettering, STYLES["classic"]))
+    cols, rows, _, _ = GridLayout.sheet(paper, style, ROOMY_SCALE)
+    return GridLayout(full, paper=paper, lettering=content.lettering, cols=cols, rows=rows, scale=ROOMY_SCALE).fits()
 
 
 def _largest_whole(full, paper, lettering):

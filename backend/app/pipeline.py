@@ -11,6 +11,7 @@ from app.harvester import Harvester
 from app.store import MemoryStore
 
 ARTIFACT_DIR = os.getenv("ARTIFACT_DIR", "artifacts")
+MAX_DEPTH = 3  # generations read at most, however much room the sheet has
 
 
 class Options(dict):
@@ -43,6 +44,12 @@ def generate(artist_id, job_id, options=None, progress=None):
     from app import narrative
     with narrative.foreground():
         content = build_content(artist_id, opts, progress)
+        # a family small for its sheet: read a generation further before drawing it
+        from app.fitting import roomy
+        while opts["depth"] < MAX_DEPTH and not artist_id.startswith("demo:") and roomy(content, opts["paper"]):
+            opts = Options(**dict(opts, depth=opts["depth"] + 1))
+            progress(60, f"A small family for {opts['paper']}: reading a generation further")
+            content = build_content(artist_id, opts, progress)
     lettering = content.lettering
 
     # 2. then the placement
