@@ -177,3 +177,12 @@ def test_a_family_that_fits_whole_is_lettered_as_large_as_the_sheet_allows():
     _, small, fit = fit_tree(harvest, paper="A0", max_bands=3)
     assert fit["bands_shown"] == fit["bands_available"]  # everything fits
     assert small["stats"]["smallest_text_pt"] > 6.5 * 1.3  # and prints well above the smallest readable size
+
+
+def test_a_family_small_for_its_sheet_is_roomy():
+    from app.content import build_content
+    from app.fitting import roomy
+    from app.pipeline import Options
+    small = build_content("demo:acdc", Options(depth=1, max_bands=3))
+    assert roomy(small, "A0")        # three bands on A0: read further
+    assert not roomy(small, "none")  # no sheet: nothing to fill
